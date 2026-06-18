@@ -1,0 +1,8 @@
+streamlit
+playwright
+playwright-stealth
+parsel
+price-parser
+apscheduler
+python-telegram-bot
+python-dotenv
