@@ -10,8 +10,11 @@ Public surface (build step 4):
   matches_for(requirement, listings) -> list[(listing, score)] above THRESHOLD
 
 PURE module: no DB, no I/O, no network. Inputs are the plain dicts that
-db.list_requirements() and db.list_active_listings() return.
+db.list_requirements() and db.list_active_listings() return. (property_types is also
+a pure, DB-free taxonomy module — importing it keeps matcher pure.)
 """
+
+from property_types import CATEGORIES, category_of
 
 # --- tunable knobs -----------------------------------------------------------
 # DEFAULTS are the fallback when no cfg is passed. At runtime these are overridden
@@ -24,6 +27,7 @@ DEFAULTS = {
     "w_sector": 0.2,            # weight: sector fit
     "budget_softcap_pct": 0.05,  # allow ~5% over budget_max as a decaying near-match
     "sector_miss_fit": 0.3,      # a wrong sector still scores a little (ranked near-miss)
+    "type_miss_fit": 0.0,        # multiplier when the title is clearly a DIFFERENT category
 }
 # Back-compat module constants (used by the self-test and any direct importer).
 W_SIZE = DEFAULTS["w_size"]
@@ -32,6 +36,7 @@ W_SECTOR = DEFAULTS["w_sector"]
 THRESHOLD = DEFAULTS["threshold"]
 BUDGET_SOFTCAP_PCT = DEFAULTS["budget_softcap_pct"]
 SECTOR_MISS_FIT = DEFAULTS["sector_miss_fit"]
+TYPE_MISS_FIT = DEFAULTS["type_miss_fit"]
 
 
 def _cfg(cfg) -> dict:
@@ -115,6 +120,33 @@ def sector_fit(sector, sectors, miss_fit=SECTOR_MISS_FIT) -> float:
     return 1.0 if _norm_sector(sector) in wanted else miss_fit
 
 
+def property_type_fit(title, property_type, miss_fit=TYPE_MISS_FIT) -> float:
+    """1.0 if the listing fits the requested category (D19), else miss_fit.
+
+    The category is expanded to synonyms (kothi/villa/house all satisfy "house").
+    Logic is deliberately lenient so we EXPAND rather than wrongly exclude:
+      - no category, or no title              -> 1.0 (can't tell; don't penalise)
+      - title matches a synonym of the wanted category -> 1.0
+      - title clearly matches a DIFFERENT category      -> miss_fit (e.g. a Plot in a
+        house search; with the default miss_fit=0.0 this drops it below threshold)
+      - title names no category at all (ambiguous)      -> 1.0 (neutral, keep it)
+    """
+    if not property_type:
+        return 1.0
+    t = (title or "").lower()
+    if not t:
+        return 1.0
+    cat = category_of(property_type)
+    if any(syn in t for syn in CATEGORIES[cat]["synonyms"]):
+        return 1.0
+    for other, spec in CATEGORIES.items():
+        if other == cat:
+            continue
+        if any(syn in t for syn in spec["synonyms"]):
+            return miss_fit
+    return 1.0
+
+
 # --- public surface ----------------------------------------------------------
 def score(listing: dict, requirement: dict, cfg: dict | None = None) -> float:
     """Weighted 0..1 score of how well a listing fits a requirement (D5).
@@ -134,7 +166,12 @@ def score(listing: dict, requirement: dict, cfg: dict | None = None) -> float:
     )
     sec = sector_fit(listing.get("sector"), requirement.get("sectors") or [],
                      c["sector_miss_fit"])
-    return c["w_size"] * s + c["w_price"] * p + c["w_sector"] * sec
+    base = c["w_size"] * s + c["w_price"] * p + c["w_sector"] * sec
+    # Property-type is a GATE, not a weighted term (D19): a wrong-category listing is
+    # irrelevant, not a near-miss, so it multiplies the score (default miss_fit=0 -> drop).
+    t = property_type_fit(listing.get("title"), requirement.get("property_type"),
+                          c["type_miss_fit"])
+    return base * t
 
 
 def matches_for(requirement: dict, listings: list[dict],
@@ -185,6 +222,19 @@ if __name__ == "__main__":
 
     # Missing fields never raise.
     assert 0.0 <= score({"price": None, "size_sqm": None, "sector": None}, req) <= 1.0
+
+    # Property-type gate (D19): a house requirement expands to kothi/villa, excludes plots.
+    house_req = {**req, "property_type": "house"}
+    assert property_type_fit("4 BHK Kothi in Sector 50", "house") == 1.0
+    assert property_type_fit("Independent Villa, Noida", "house") == 1.0
+    assert property_type_fit("Residential Plot in Sector 50", "house") == 0.0
+    assert property_type_fit("4 BHK in Sector 50", "house") == 1.0  # ambiguous -> keep
+    # A plot listing is dropped from a house search even if size/price/sector are perfect.
+    plot = {"size_sqm": 112, "price": 43000000, "sector": "Sector 50",
+            "title": "Residential Plot in Sector 50"}
+    assert score(plot, house_req) == 0.0, score(plot, house_req)
+    kothi = {**plot, "title": "4 BHK Kothi in Sector 50"}
+    assert score(kothi, house_req) == 1.0, score(kothi, house_req)
 
     print("matcher self-tests passed:")
     print(f"  exact={exact_score:.3f}  over_budget={over_score:.3f}  "

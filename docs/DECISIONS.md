@@ -173,6 +173,24 @@ built-up area.
 Fallback to carpet/plot is approximate — flag in the listing if only a fallback was used
 if this becomes a problem later.
 
+## D19 — Property type is a user choice with synonym expansion
+**Decision:** A requirement picks ONE category — **house / plot / apartment** (single
+select; for two kinds make two requirements, D1). The category lives in
+`requirements.property_type` (a key) and is expanded by `property_types.py` two ways:
+(1) **search** — each portal gets a category-specific SRP URL (MagicBricks proptype
+tokens, confirmed from the live `fetch-filter-data` API), so we fetch the right kind at
+the source; (2) **matching** — `matcher.property_type_fit` recognises synonyms, so a
+listing titled "Kothi"/"Villa"/"Independent House" all satisfy `house`. It is a GATE
+(multiplier), not a weighted term: a wrong-category title multiplies the score by
+`type_miss_fit` (default **0.0** → dropped). Ambiguous titles (no category word) are
+left neutral (1.0) so we expand rather than wrongly exclude.
+**Why:** User asked for a category choice that broadens the search to all the names a
+type goes by (kothi/house/independent house, etc.), instead of one hardcoded URL.
+**Implication:** Adding a portal means adding its category URLs to `property_types.py`.
+Legacy free-text values (older rows stored `"kothi"`) map onto a key via `category_of()`.
+`type_miss_fit` is a live DB knob (D17) on the Settings page — raise it above 0 to keep
+wrong-type listings as low-ranked instead of dropping them.
+
 ---
 
 ## Open questions (resolve before/while building)

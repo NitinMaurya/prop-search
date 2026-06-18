@@ -21,6 +21,8 @@ name = "MagicBricks"  # must match portals.name
 import logging
 import re
 
+from property_types import search_url as _category_search_url
+
 # Reuse the tuned normalization helpers + the optional-lib guards (D14).
 from scrapers.nineacres import (
     _HAVE_PARSEL, _HAVE_PLAYWRIGHT, Selector, sync_playwright,
@@ -58,7 +60,12 @@ class Fetcher:
         if not _HAVE_PLAYWRIGHT:
             log.warning("playwright not installed; MagicBricks fetch skipped")
             return []
-        url = portal_cfg.get("search_url_template") or HOMEPAGE
+        # Target the SRP for the requirement's category (D19: house/plot/apartment ->
+        # the right proptype tokens). Fall back to the seeded portal template.
+        url = (_category_search_url("magicbricks", requirement.get("property_type"))
+               or portal_cfg.get("search_url_template") or HOMEPAGE)
+        log.info("MagicBricks fetch: category=%r url=%s",
+                 requirement.get("property_type"), url)
         try:
             from playwright_stealth import Stealth  # type: ignore
             pw_ctx = Stealth().use_sync(sync_playwright())

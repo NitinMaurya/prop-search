@@ -60,6 +60,7 @@ SEED_SETTINGS = {
     "w_sector": 0.2,             # weight: sector fit
     "budget_softcap_pct": 0.05,  # allowed % over budget_max before price_fit hits 0
     "sector_miss_fit": 0.3,      # score for a non-matching sector
+    "type_miss_fit": 0.0,        # D19: multiplier for a wrong-category listing (0 = drop)
     "stale_threshold_runs": 3,   # Q3: missed runs before a listing is marked stale
 }
 
@@ -96,7 +97,7 @@ def init() -> None:
             CREATE TABLE IF NOT EXISTS requirements (
                 id                 INTEGER PRIMARY KEY,
                 owner              TEXT NOT NULL,
-                property_type      TEXT NOT NULL DEFAULT 'kothi',
+                property_type      TEXT NOT NULL DEFAULT 'house',  -- key from property_types.CATEGORIES (D19)
                 sizes_sqm          TEXT NOT NULL DEFAULT '[]',   -- JSON list
                 size_tolerance_pct REAL NOT NULL DEFAULT 30,
                 budget_min         INTEGER NOT NULL,
@@ -185,7 +186,7 @@ def init() -> None:
 
 # ------------------------------------------------------------------------ requirements
 def add_requirement(owner, budget_min, budget_max, sizes_sqm=None, sectors=None,
-                    property_type="kothi", size_tolerance_pct=30) -> int:
+                    property_type="house", size_tolerance_pct=30) -> int:
     with connect() as conn:
         cur = conn.execute(
             "INSERT INTO requirements (owner, property_type, sizes_sqm, "
@@ -403,7 +404,7 @@ def matcher_config() -> dict:
     """The subset of settings the matcher consumes (pass to matcher.matches_for)."""
     s = all_settings()
     return {k: s[k] for k in ("threshold", "w_size", "w_price", "w_sector",
-                              "budget_softcap_pct", "sector_miss_fit")}
+                              "budget_softcap_pct", "sector_miss_fit", "type_miss_fit")}
 
 
 def recent_runs(limit=20) -> list[dict]:

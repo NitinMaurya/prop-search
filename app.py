@@ -14,10 +14,36 @@ Run: streamlit run app.py
 """
 
 import html
+import os
+import re
+import subprocess
+import sys
 
 import streamlit as st
 
 import db
+import property_types as pt
+
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def run_scrape_now() -> tuple[bool, str]:
+    """Run one pipeline cycle on demand via `scheduler.py --once` (subprocess, so
+    Playwright runs outside Streamlit's thread). Returns (ok, human summary)."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "scheduler.py", "--once"],
+            cwd=_APP_DIR, capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        return False, "Scrape timed out after 10 minutes."
+    out = (proc.stdout or "") + (proc.stderr or "")
+    m = re.search(r"run \d+ done: (\{.*\})", out)
+    if proc.returncode == 0 and m:
+        return True, f"Scrape complete — {m.group(1)}"
+    if proc.returncode == 0:
+        return True, "Scrape complete."
+    tail = "\n".join(out.strip().splitlines()[-3:])
+    return False, f"Scrape failed (exit {proc.returncode}).\n{tail}"
 
 CR = 10_000_000  # 1 Crore = 10,000,000 rupees (D9 budget display convenience)
 SIZE_OPTIONS = [112, 162]  # confirmed target sizes (Q2); custom allowed via number input
@@ -107,7 +133,20 @@ st.sidebar.divider()
 sb1, sb2 = st.sidebar.columns(2)
 sb1.metric("Listings", _sb.get("active_listings", 0))
 sb2.metric("Matches", _sb.get("total_matches", 0))
-st.sidebar.caption("Run `python scheduler.py --once` to refresh listings.")
+
+if st.sidebar.button("🔄 Refresh listings now", type="primary",
+                     use_container_width=True):
+    with st.spinner("Scraping portals and matching… (~30–60s)"):
+        ok, msg = run_scrape_now()
+    st.session_state["scrape_result"] = {"ok": ok, "msg": msg}
+    st.rerun()
+st.sidebar.caption("Scrapes all enabled portals, re-matches against your active "
+                   "requirements, and updates the tables below.")
+
+# Show the outcome of the last on-demand scrape (survives the post-run rerun).
+_res = st.session_state.pop("scrape_result", None)
+if _res:
+    (st.success if _res["ok"] else st.error)(_res["msg"])
 
 
 # ============================================================ PAGE — Requirements (D9)
@@ -119,7 +158,13 @@ def page_requirements():
         with st.form("create_requirement", clear_on_submit=True):
             c1, c2 = st.columns(2)
             owner = c1.text_input("Owner (name/email) *")
-            property_type = c2.text_input("Property type", value="kothi")
+            _pt_labels = dict(pt.choices())
+            _pt_keys = list(_pt_labels)
+            property_type = c2.selectbox(
+                "Property type", options=_pt_keys,
+                format_func=lambda k: _pt_labels[k],
+                help="Expands to the right portal search + matching synonyms (D19). "
+                     "For two kinds, add two requirements.")
 
             c3, c4 = st.columns(2)
             sizes_sel = c3.multiselect("Sizes (sqm)", options=SIZE_OPTIONS,
@@ -150,7 +195,7 @@ def page_requirements():
                     budget_min=cr_to_rupees(budget_min_cr),
                     budget_max=cr_to_rupees(budget_max_cr),
                     sizes_sqm=sizes, sectors=sectors,
-                    property_type=property_type.strip() or "kothi",
+                    property_type=property_type,
                     size_tolerance_pct=size_tolerance_pct,
                 )
                 st.success(f"Added requirement for {owner.strip()}.")
@@ -161,28 +206,39 @@ def page_requirements():
         st.info("No requirements yet — add one above to start matching.")
         return
 
-    for r in reqs:
-        sizes_disp = ", ".join(str(s) for s in r["sizes_sqm"]) or "—"
-        sectors_disp = ", ".join(r["sectors"]) if r["sectors"] else "all Noida"
-        pill = ("<span class='ps-pill ps-ok'>active</span>" if r["active"]
-                else "<span class='ps-pill ps-muted'>inactive</span>")
-        st.markdown(
-            f"<div class='ps-card'><div class='ps-card-head'>"
-            f"<div class='ps-title'>#{r['id']} · {html.escape(r['owner'])} · "
-            f"{html.escape(r['property_type'])}</div>{pill}</div>"
-            f"<div class='ps-chips'>"
-            f"<span class='ps-chip'>📐 {sizes_disp} sqm (±{r['size_tolerance_pct']:g}%)</span>"
-            f"<span class='ps-chip'>💰 {rupees_to_cr(r['budget_min'])}–"
-            f"{rupees_to_cr(r['budget_max'])} Cr</span>"
-            f"<span class='ps-chip'>📍 {html.escape(sectors_disp)}</span>"
-            f"</div></div>", unsafe_allow_html=True)
+    st.subheader("All requirements")
+    st.dataframe(
+        [{
+            "ID": r["id"],
+            "Owner": r["owner"],
+            "Type": pt.label_of(r["property_type"]),
+            "Sizes (sqm)": ", ".join(str(s) for s in r["sizes_sqm"]) or "—",
+            "Tol %": r["size_tolerance_pct"],
+            "Min (Cr)": rupees_to_cr(r["budget_min"]),
+            "Max (Cr)": rupees_to_cr(r["budget_max"]),
+            "Sectors": ", ".join(r["sectors"]) if r["sectors"] else "all Noida",
+            "Active": bool(r["active"]),
+        } for r in reqs],
+        use_container_width=True, hide_index=True,
+        column_config={
+            "Min (Cr)": st.column_config.NumberColumn(format="₹ %.2f"),
+            "Max (Cr)": st.column_config.NumberColumn(format="₹ %.2f"),
+            "Tol %": st.column_config.NumberColumn(format="%g%%"),
+            "Active": st.column_config.CheckboxColumn(),
+        })
 
-        with st.expander(f"Edit / manage #{r['id']}"):
+    st.subheader("Edit / manage")
+    for r in reqs:
+        with st.expander(f"#{r['id']} · {r['owner']} · {pt.label_of(r['property_type'])}"):
             with st.form(f"edit_requirement_{r['id']}"):
                 ec1, ec2 = st.columns(2)
                 owner_e = ec1.text_input("Owner", value=r["owner"], key=f"o_{r['id']}")
-                ptype_e = ec2.text_input("Property type", value=r["property_type"],
-                                         key=f"pt_{r['id']}")
+                _pt_labels_e = dict(pt.choices())
+                _pt_keys_e = list(_pt_labels_e)
+                ptype_e = ec2.selectbox(
+                    "Property type", options=_pt_keys_e,
+                    index=_pt_keys_e.index(pt.category_of(r["property_type"])),
+                    format_func=lambda k: _pt_labels_e[k], key=f"pt_{r['id']}")
                 sizes_e = st.text_input("Sizes (sqm, comma-separated)",
                                         value=", ".join(str(s) for s in r["sizes_sqm"]),
                                         key=f"sz_{r['id']}")
@@ -217,7 +273,7 @@ def page_requirements():
                 sectors = [s.strip() for s in sectors_e.split(",") if s.strip()]
                 db.update_requirement(
                     r["id"], owner=owner_e.strip(),
-                    property_type=ptype_e.strip() or "kothi", sizes_sqm=sizes,
+                    property_type=ptype_e, sizes_sqm=sizes,
                     size_tolerance_pct=tol_e, budget_min=cr_to_rupees(bmin_e),
                     budget_max=cr_to_rupees(bmax_e), sectors=sectors,
                     active=1 if active_e else 0)
@@ -236,8 +292,8 @@ def page_matches():
     # TODO: a list_matches() in db.py would let us show notified matches too.
     matches = db.unnotified_matches()
     if not matches:
-        st.info("No matches yet. Add a requirement, then run "
-                "`python scheduler.py --once` to scrape and match.")
+        st.info("No matches yet. Add a requirement, then click "
+                "**🔄 Refresh listings now** in the sidebar to scrape and match.")
         return
 
     owners = sorted({m["owner"] for m in matches if m.get("owner")})
@@ -264,28 +320,27 @@ def page_matches():
     s3.metric("Lowest price", f"₹ {rupees_to_cr(min(prices))} Cr" if prices else "—")
     st.write("")
 
-    for m in rows:
-        title = html.escape(m.get("title") or "(untitled listing)")
-        price_cr = rupees_to_cr(m.get("price"))
-        size = m.get("size_sqm")
-        size_disp = f"{size:g}" if size is not None else "—"
-        sector = html.escape(m.get("sector") or "—")
-        owner = html.escape(m.get("owner") or "—")
-        pct = round((m.get("score") or 0) * 100)
-        url = m.get("url") or ""
-        btn = (f"<a class='ps-btn' href='{html.escape(url)}' target='_blank'>"
-               f"View listing ↗</a>") if url else ""
-        st.markdown(
-            f"<div class='ps-card'>"
-            f"<div class='ps-card-head'><div class='ps-title'>{title}</div>"
-            f"<div class='ps-badge {_score_class(pct)}'>{pct}% match</div></div>"
-            f"<div class='ps-price'>₹ {price_cr} Cr</div>"
-            f"<div class='ps-chips'>"
-            f"<span class='ps-chip'>📐 {size_disp} sqm</span>"
-            f"<span class='ps-chip'>📍 {sector}</span>"
-            f"<span class='ps-chip'>👤 {owner}</span>"
-            f"<span class='ps-chip'>req #{m['requirement_id']}</span></div>"
-            f"{btn}</div>", unsafe_allow_html=True)
+    table = [{
+        "Score": round((m.get("score") or 0) * 100),
+        "Title": m.get("title") or "(untitled listing)",
+        "Price (Cr)": rupees_to_cr(m.get("price")),
+        "Size (sqm)": m.get("size_sqm"),
+        "Sector": m.get("sector") or "—",
+        "Owner": m.get("owner") or "—",
+        "Req": m["requirement_id"],
+        "Listing": m.get("url") or "",
+    } for m in rows]
+    st.dataframe(
+        table, use_container_width=True, hide_index=True,
+        column_config={
+            "Score": st.column_config.ProgressColumn(
+                "Score", min_value=0, max_value=100, format="%d%%"),
+            "Title": st.column_config.TextColumn("Title", width="large"),
+            "Price (Cr)": st.column_config.NumberColumn("Price", format="₹ %.2f Cr"),
+            "Size (sqm)": st.column_config.NumberColumn("Size", format="%.0f sqm"),
+            "Listing": st.column_config.LinkColumn("Listing", display_text="Open ↗"),
+        })
+    st.caption("Click any column header to sort. Use the ⤢ icon to expand full-screen.")
 
 
 # ============================================================== PAGE — System (D15)
@@ -370,6 +425,12 @@ def page_settings():
                                         float(knobs.get("budget_softcap_pct", 0.05)), 0.01)
         sector_miss_fit = tc2.slider("Wrong-sector score", 0.0, 1.0,
                                      float(knobs.get("sector_miss_fit", 0.3)), 0.05)
+        type_miss_fit = st.slider(
+            "Wrong property-type multiplier (0 = drop, D19)", 0.0, 1.0,
+            float(knobs.get("type_miss_fit", 0.0)), 0.05,
+            help="Score multiplier when a listing's title is clearly a DIFFERENT "
+                 "category than the requirement (e.g. a Plot in a House search). "
+                 "0 drops it entirely; raise it to keep wrong-type listings as low-ranked.")
         stale_threshold_runs = st.number_input(
             "Stale after N missed 6h runs", min_value=1, step=1,
             value=int(knobs.get("stale_threshold_runs", 3)))
@@ -378,7 +439,7 @@ def page_settings():
             for key, value in {
                 "threshold": threshold, "w_size": w_size, "w_price": w_price,
                 "w_sector": w_sector, "budget_softcap_pct": budget_softcap_pct,
-                "sector_miss_fit": sector_miss_fit,
+                "sector_miss_fit": sector_miss_fit, "type_miss_fit": type_miss_fit,
                 "stale_threshold_runs": stale_threshold_runs,
             }.items():
                 db.set_setting(key, value)
