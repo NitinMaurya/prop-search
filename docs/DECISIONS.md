@@ -210,6 +210,42 @@ so the user refreshes them periodically. Can't be exercised from a datacenter IP
 D16) — runs on the user's residential machine. Phone numbers still require per-listing
 OTP and are out of scope.
 
+## D22 — MagicBricks login via persistent browser profile (supersedes MB_COOKIE)
+**Decision:** Authentication for the JSON API (D20) uses a **logged-in Playwright
+persistent profile**, not a pasted/extracted cookie. `mb_login.py` opens a headed
+browser on the scraper's `PROFILE_DIR`; the user logs in once (mobile OTP), closes it,
+and the session persists on disk. The fetcher then runs headless on the **same profile**
+and calls `propertySearch.html` by navigating the page within that logged-in session
+(`page.goto(api_url)` → `response.text()`), so cookies attach automatically. A sidebar
+button ("Log in to MagicBricks") runs `mb_login.py` as a subprocess.
+**Why:** Reading Chrome's cookie store (browser-cookie3) was rejected — it triggers a
+keychain prompt and breaks on Chrome's app-bound cookie encryption. A real persistent
+session is how logged-in scraping is normally done: robust, no cookie copying, no
+secrets in `.env`, and it sidesteps OTP automation (done by hand once).
+**Implication:** Login window needs a display → runs on the user's Mac (the 6h scheduler
+reuses the saved profile headlessly). `MB_COOKIE`/`mb_auth.py`/`browser-cookie3` removed.
+Persistent context can't be opened twice at once, so login and scrape never overlap
+(both are user-triggered, sequential). Session expiry = re-run the login button.
+
+## D23 — Parse listings from the SRP's embedded JSON (no API, no login)
+**Decision:** The MagicBricks SRP HTML (which the browser fetches reliably, passing
+Akamai) **embeds the full per-listing JSON** — each object carries `appovedAuthC`
+(authority), `OwnershipTypeD`, `allImgPath`/`image`, `coveredArea`+`covAreaUnit`, price,
+title, detail `url`, advertiser. The parser splits the HTML on the per-listing boundary
+`"encId":"` and regexes the needed fields from each chunk (`_emb`), unescaping `/`
+etc. This yields images + authority + ownership **without the JSON API or a login**.
+Card-scraping remains the last-ditch fallback.
+**Why:** The `propertySearch` JSON API is Akamai-blocked for automation (401/404 even
+logged in; in-page fetch "Failed to fetch") — confirmed on the user's own machine, so
+it's an automation-fingerprint block, not IP. But the same data is already sitting in
+the page HTML, so we just read it there. This kills the whole login/cookie/API problem.
+**Implication:** Supersedes the auth mechanism of D20/D22 — `MB_COOKIE` and the
+persistent-login flow are no longer needed for images/authority (the sidebar login UI was
+removed; `mb_login.py` remains only as an optional CLI for richer logged-in fields like
+contact). Per-listing regex is robust to page-structure changes since it doesn't depend
+on a wrapping array key. 99acres + Housing.com portals were disabled (always blocked from
+here) so refresh is MagicBricks-only and fast.
+
 ---
 
 ## Open questions (resolve before/while building)

@@ -22,6 +22,7 @@ import sys
 import streamlit as st
 
 import db
+import matcher
 import property_types as pt
 
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -44,6 +45,7 @@ def run_scrape_now() -> tuple[bool, str]:
         return True, "Scrape complete."
     tail = "\n".join(out.strip().splitlines()[-3:])
     return False, f"Scrape failed (exit {proc.returncode}).\n{tail}"
+
 
 CR = 10_000_000  # 1 Crore = 10,000,000 rupees (D9 budget display convenience)
 SIZE_OPTIONS = [112, 162]  # confirmed target sizes (Q2); custom allowed via number input
@@ -147,6 +149,7 @@ st.sidebar.caption("Scrapes all enabled portals, re-matches against your active 
 _res = st.session_state.pop("scrape_result", None)
 if _res:
     (st.success if _res["ok"] else st.error)(_res["msg"])
+
 
 
 # ============================================================ PAGE — Requirements (D9)
@@ -303,8 +306,18 @@ def page_matches():
     req_filter = f2.selectbox("Requirement", ["All requirements"] + req_ids)
 
     rows = matches
-    if db.get_setting("noida_authority_only", 1):  # D21
+    noida_on = bool(db.get_setting("noida_authority_only", 1))
+    if noida_on:  # D21
         rows = [m for m in rows if db.is_noida_authority(m)]
+    dropped_by_noida = len(matches) - len(rows)
+    # Hard sector filter (D24): drop matches whose listing isn't in that requirement's
+    # chosen sectors (handles old matches recorded before sectors were set).
+    _req_sectors = {r["id"]: (r["sectors"] or []) for r in db.list_requirements()}
+    before_sector = len(rows)
+    rows = [m for m in rows
+            if matcher.sector_matches(m.get("sector"),
+                                      _req_sectors.get(m["requirement_id"], []))]
+    dropped_by_sector = before_sector - len(rows)
     if owner_filter != "All owners":
         rows = [m for m in rows if m.get("owner") == owner_filter]
     if req_filter != "All requirements":
@@ -312,7 +325,19 @@ def page_matches():
     rows = sorted(rows, key=lambda m: m["score"] or 0, reverse=True)
 
     if not rows:
-        st.info("No matches for the selected filters.")
+        # Common cause: not logged in -> HTML-only listings have no authority data ->
+        # the Noida filter hides them all. Tell the user exactly what to do (D21/D22).
+        bits = []
+        if dropped_by_sector:
+            bits.append(f"{dropped_by_sector} outside your chosen sectors")
+        if noida_on and dropped_by_noida:
+            bits.append(f"{dropped_by_noida} not NOIDA-Authority/freehold")
+        if bits:
+            st.info("Some listings were hidden by your filters (" + "; ".join(bits) +
+                    "). Widen the sectors or budget on the **Requirements** page, adjust "
+                    "**Settings**, or **🔄 Refresh** for fresh listings.")
+        else:
+            st.info("No matches for the selected filters.")
         return
 
     prices = [m["price"] for m in rows if m.get("price")]

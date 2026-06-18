@@ -22,10 +22,8 @@ import json
 import logging
 import os
 import re
-import urllib.parse
-import urllib.request
 
-from property_types import category_of, search_url as _category_search_url
+from property_types import search_url as _category_search_url
 
 # Reuse the tuned normalization helpers + the optional-lib guards (D14).
 from scrapers.nineacres import (
@@ -39,6 +37,7 @@ log = logging.getLogger(__name__)
 
 HOMEPAGE = "https://www.magicbricks.com/"
 PROFILE_DIR = _ACRES_PROFILE.replace("99acres", "magicbricks")
+MAX_PAGES = 5  # result pages to walk per refresh (D25); ~30 listings each
 
 SELECTORS = {
     "result_ready": "div.mb-srp__card",
@@ -54,39 +53,11 @@ AREA_LABEL_PRIORITY = ("Super Area", "Built Up Area", "Carpet Area", "Plot Area"
 # Per-card detail URLs are embedded in the page (no <a> on cards). Card order matches.
 _DETAIL_URL_RE = re.compile(r"https://www\.magicbricks\.com/propertyDetails/[^\"\\ ]{5,160}")
 
-# ---- JSON API (D20): propertySearch.html returns clean JSON incl. images + advertiser.
-# Used when MB_COOKIE is set (a logged-in session from the user's residential IP); the
-# Playwright HTML path remains the no-cookie fallback. propertyType IDs confirmed live:
-_MB_PROPERTY_TYPE_IDS = {
-    "house": "10001,10017",   # Residential House, Villa
-    "plot": "10000",          # Residential Plot
-    "apartment": "10002,10003,10021,10022",  # Multistorey/Builder-Floor/Penthouse/Studio
-}
-_API_URL = "https://www.magicbricks.com/mbsrp/propertySearch.html"
-_MB_CITY_NOIDA = "6403"
-_NOIDA_AUTHORITY_ID = "1534906"  # appovedAuth filter id for NOIDA Authority (D21)
-
-
-def _noida_authority_only() -> bool:
-    """Whether to restrict to NOIDA-authority listings (D21 live setting, default on)."""
-    try:
-        import db
-        return bool(db.get_setting("noida_authority_only", 1))
-    except Exception:  # noqa: BLE001 - never break the scrape on a settings read
-        return True
+# The SRP HTML embeds the full listing JSON (D23): each listing object carries images
+# (allImgPath), approving authority (appovedAuthC), ownership (OwnershipTypeD), covered
+# area, etc. We parse those straight out of the page — no API call or login needed.
 # covAreaUnit code -> factor to convert the covered area to sqm (D18 = covered/built-up).
 _UNIT_TO_SQM = {"12801": 1.0, "12800": 0.09290304, "12803": 0.83612736}
-
-
-def _mb_cookie() -> str | None:
-    """A logged-in MagicBricks cookie string, from env (.env). None if unset (D20)."""
-    try:
-        from dotenv import load_dotenv  # type: ignore
-        load_dotenv()
-    except Exception:  # noqa: BLE001 - dotenv optional
-        pass
-    c = os.getenv("MB_COOKIE")
-    return c.strip() or None if c else None
 
 
 class Fetcher:
@@ -95,30 +66,23 @@ class Fetcher:
     name = "MagicBricks"
 
     def fetch(self, requirement: dict, portal_cfg: dict) -> list[dict]:
-        # Preferred path (D20): authenticated JSON API. Robust + carries images/advertiser.
-        cookie = _mb_cookie()
-        if cookie:
-            rows = self._fetch_json(requirement, cookie)
-            if rows:
-                return rows
-            log.warning("MagicBricks JSON API returned nothing; falling back to HTML")
-
+        """Fetch via the persistent (possibly logged-in) browser profile (D22). Tries the
+        SRP HTML — the full listing data (images, authority, ownership) is embedded in
+        it (D23), so no API call / login is needed. Never raises; [] on block/error."""
         if not _HAVE_PLAYWRIGHT:
             log.warning("playwright not installed; MagicBricks fetch skipped")
             return []
-        # Target the SRP for the requirement's category (D19: house/plot/apartment ->
-        # the right proptype tokens). Fall back to the seeded portal template.
-        url = (_category_search_url("magicbricks", requirement.get("property_type"))
-               or portal_cfg.get("search_url_template") or HOMEPAGE)
-        log.info("MagicBricks fetch: category=%r url=%s",
-                 requirement.get("property_type"), url)
+        # SRP page for the requirement's category (D19).
+        srp_url = (_category_search_url("magicbricks", requirement.get("property_type"))
+                   or portal_cfg.get("search_url_template") or HOMEPAGE)
+        log.info("MagicBricks fetch: category=%r", requirement.get("property_type"))
         try:
             from playwright_stealth import Stealth  # type: ignore
             pw_ctx = Stealth().use_sync(sync_playwright())
         except Exception:  # noqa: BLE001
             pw_ctx = sync_playwright()  # type: ignore[misc]
 
-        import os
+        rows: list[dict] = []
         try:
             with pw_ctx as p:  # type: ignore[misc]
                 os.makedirs(PROFILE_DIR, exist_ok=True)
@@ -134,69 +98,48 @@ class Fetcher:
                 )
                 try:
                     page = context.new_page()
-                    try:
+                    try:  # warm up + carry the logged-in session/Akamai cookies
                         page.goto(HOMEPAGE, wait_until="domcontentloaded",
                                   timeout=WAIT_TIMEOUT_MS)
                         page.wait_for_timeout(WARMUP_PAUSE_MS)
                     except Exception as e:  # noqa: BLE001
                         log.debug("MagicBricks warmup failed (continuing): %s", e)
-                    page.goto(url, wait_until="domcontentloaded", timeout=WAIT_TIMEOUT_MS)
-                    try:
-                        page.wait_for_selector(SELECTORS["result_ready"],
-                                               timeout=WAIT_TIMEOUT_MS)
-                    except Exception as e:  # noqa: BLE001
-                        log.warning("MagicBricks: cards not found at %s: %s", url, e)
-                    page.wait_for_timeout(2000)  # let lazy cards settle
-                    html = page.content()
-                    final_url = page.url
+
+                    # Walk result pages (D25): one raw row per page; the parser pulls the
+                    # embedded listings from each. Stop on a blocked/empty/last page.
+                    for pg_num in range(1, MAX_PAGES + 1):
+                        page_url = srp_url + ("&" if "?" in srp_url else "?") + \
+                            f"page={pg_num}"
+                        try:
+                            page.goto(page_url, wait_until="domcontentloaded",
+                                      timeout=WAIT_TIMEOUT_MS)
+                            page.wait_for_timeout(1800)  # let listings settle
+                            html = page.content()
+                        except Exception as e:  # noqa: BLE001
+                            log.warning("MagicBricks page %d failed: %s", pg_num, e)
+                            break
+                        # Real SRP pages are >500KB; a few-KB page is an Akamai
+                        # challenge/interstitial, not a genuine empty results page.
+                        if _looks_blocked(html) or len(html) < 50000:
+                            log.warning("MagicBricks page %d blocked/challenge (%d bytes)",
+                                        pg_num, len(html or ""))
+                            break
+                        has_listings = '"encId":"' in html
+                        if has_listings or pg_num == 1:
+                            rows.append({"url": page_url, "raw_html": html})
+                            log.info("MagicBricks page %d fetched (%d bytes, listings=%s)",
+                                     pg_num, len(html), has_listings)
+                        if not has_listings:  # past the last page
+                            break
                 finally:
                     context.close()
         except Exception as e:  # noqa: BLE001 - never raise (D13)
-            log.error("MagicBricks fetch failed for %s: %s", url, e)
-            return []
+            log.error("MagicBricks fetch failed: %s", e)
+            return rows
 
-        if _looks_blocked(html):
-            log.warning("MagicBricks returned a block/empty page (%d bytes)",
-                        len(html or ""))
-            return []
-        return [{"url": final_url, "raw_html": html}]
-
-    def _fetch_json(self, requirement: dict, cookie: str) -> list[dict]:
-        """Call propertySearch.html with the user's cookie (D20). Never raises.
-        Stores the raw JSON text as raw_html; the Parser detects JSON vs HTML."""
-        cat = category_of(requirement.get("property_type"))
-        ptype = _MB_PROPERTY_TYPE_IDS.get(cat, _MB_PROPERTY_TYPE_IDS["house"])
-        params = {
-            "editSearch": "Y", "category": "S", "propertyType": ptype, "pType": ptype,
-            "city": _MB_CITY_NOIDA, "page": "1", "sortBy": "premiumRecent",
-            "postedSince": "-1", "isNRI": "Y", "nriPref": "Y", "multiLang": "en",
-        }
-        bmin, bmax = requirement.get("budget_min"), requirement.get("budget_max")
-        if bmin:
-            params["budgetMin"] = str(int(bmin))
-        if bmax:
-            params["budgetMax"] = str(int(bmax))
-        if _noida_authority_only():  # server-side filter to NOIDA Authority (D21)
-            params["appovedAuth"] = _NOIDA_AUTHORITY_ID
-        url = _API_URL + "?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url, headers={
-            "Accept": "application/json, text/plain, */*",
-            "User-Agent": USER_AGENT,
-            "Referer": "https://www.magicbricks.com/property-for-sale/residential-real-estate?cityName=Noida",
-            "Cookie": cookie,
-        })
-        try:
-            with urllib.request.urlopen(req, timeout=WAIT_TIMEOUT_MS / 1000) as resp:
-                body = resp.read().decode("utf-8", "replace")
-        except Exception as e:  # noqa: BLE001 - never raise (D13)
-            log.error("MagicBricks JSON fetch failed: %s", e)
-            return []
-        if not body.lstrip().startswith("{"):
-            log.warning("MagicBricks JSON API did not return JSON (blocked?): %.80s", body)
-            return []
-        log.info("MagicBricks JSON fetch ok (category=%s, %d bytes)", cat, len(body))
-        return [{"url": url, "raw_html": body}]
-
+        if not rows:
+            log.warning("MagicBricks returned no usable pages")
+        return rows
 
 class Parser:
     """parsel parser for MagicBricks (D13). One SRP page -> many listings. Never raises."""
@@ -210,6 +153,13 @@ class Parser:
         # JSON API response (D20) — detect and parse without parsel.
         if html.lstrip().startswith("{"):
             return self._parse_json(html)
+        # SRP HTML: the listings are embedded as JSON objects (D23) carrying images +
+        # authority + ownership. Extract those first; fall back to card scraping.
+        embedded = self._parse_embedded(html)
+        if embedded:
+            log.info("MagicBricks: %d listings from embedded JSON", len(embedded))
+            return embedded
+        log.info("MagicBricks: no embedded JSON; scraping HTML cards")
         if not _HAVE_PARSEL:
             log.warning("parsel not installed; MagicBricks parse skipped")
             return []
@@ -266,6 +216,54 @@ class Parser:
         }
 
 
+    # ----------------------------------------------- embedded SRP JSON parsing (D23)
+    def _parse_embedded(self, html: str) -> list[dict]:
+        """Extract per-listing objects embedded in the SRP HTML. Each listing object
+        begins with `"encId":"`, so we split on that and regex the fields we need from
+        each chunk (robust to the page's overall structure)."""
+        chunks = html.split('"encId":"')
+        if len(chunks) < 2:
+            return []
+        out, seen = [], set()
+        for ch in chunks[1:]:
+            try:
+                lst = self._parse_embedded_one(ch[:9000])
+            except Exception as e:  # noqa: BLE001 - one bad chunk never aborts
+                log.debug("MagicBricks: bad embedded chunk: %s", e)
+                continue
+            if lst and lst["external_id"] not in seen:
+                seen.add(lst["external_id"])
+                out.append(lst)
+        return out
+
+    def _parse_embedded_one(self, ch: str) -> dict | None:
+        price = _emb(ch, "price", num=True)
+        size = _json_area_to_sqm(_emb(ch, "coveredArea") or _emb(ch, "ca"),
+                                 str(_emb(ch, "covAreaUnit") or ""))
+        ext_id = _emb(ch, "id")
+        if not price or size is None or not ext_id:
+            return None
+        u = _emb(ch, "url")
+        url = ("https://www.magicbricks.com/propertyDetails/" + u) if u else HOMEPAGE
+        name = (_emb(ch, "companyname") or _emb(ch, "oname")
+                or _emb(ch, "contName") or "")
+        advertiser = " · ".join(x for x in (name, _emb(ch, "userType")) if x) or None
+        image = _emb(ch, "allImgPath_first") or _emb(ch, "image")
+        return {
+            "external_id": str(ext_id),
+            "url": url,
+            "title": _emb(ch, "propertyTitle") or _emb(ch, "auto_desc"),
+            "price": int(price),
+            "size_sqm": size,
+            "sector": _emb(ch, "lmtDName") or _emb(ch, "locSeoName"),
+            "raw_location": _emb(ch, "lmtDName"),
+            "posted_date": _emb(ch, "postDateT"),
+            "image_url": image,
+            "advertiser": advertiser,
+            "ownership": _emb(ch, "OwnershipTypeD"),
+            "approving_authority": _emb(ch, "appovedAuthC"),
+        }
+
     # ---------------------------------------------------------------- JSON parsing (D20)
     def _parse_json(self, body: str) -> list[dict]:
         try:
@@ -317,6 +315,31 @@ class Parser:
             "ownership": (item.get("OwnershipTypeD") or "").strip() or None,
             "approving_authority": (item.get("appovedAuthC") or "").strip() or None,
         }
+
+
+def _emb_unescape(v: str):
+    """Unescape a JSON string value pulled out of embedded HTML (\\u002F -> / etc.)."""
+    try:
+        return json.loads('"' + v + '"')
+    except Exception:  # noqa: BLE001
+        return v
+
+
+def _emb(chunk: str, key: str, num: bool = False):
+    """Regex one field out of a single embedded-listing chunk (D23)."""
+    if key == "allImgPath_first":
+        m = re.search(r'"allImgPath":\["((?:[^"\\]|\\.)*)"', chunk)
+        return _emb_unescape(m.group(1)) if m else None
+    pat = r'"' + re.escape(key) + r'":' + (r"(\d+)" if num else r'"((?:[^"\\]|\\.)*)"')
+    m = re.search(pat, chunk)
+    if not m:
+        return None
+    if num:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return None
+    return _emb_unescape(m.group(1)) or None
 
 
 def _json_area_to_sqm(area, unit_code: str):

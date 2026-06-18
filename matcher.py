@@ -14,6 +14,8 @@ db.list_requirements() and db.list_active_listings() return. (property_types is 
 a pure, DB-free taxonomy module — importing it keeps matcher pure.)
 """
 
+import re
+
 from property_types import CATEGORIES, category_of
 
 # --- tunable knobs -----------------------------------------------------------
@@ -45,12 +47,21 @@ def _cfg(cfg) -> dict:
 
 
 # --- helpers -----------------------------------------------------------------
-def _norm_sector(s) -> str:
-    """Normalize a sector string for case/whitespace-insensitive comparison.
+def _sector_num(s) -> str | None:
+    """The sector NUMBER from any sector string, so '36', 'Sector 36',
+    'Block A Sector 36', 'Sector 36 Block B' all reduce to '36'."""
+    m = re.search(r"\d+", str(s or ""))
+    return m.group(0) if m else None
 
-    "Sector 50", "sector 50", " SECTOR  50 " all collapse to "sector 50".
-    """
-    return " ".join(str(s).strip().lower().split())
+
+def sector_matches(sector, sectors) -> bool:
+    """True if the listing's sector number is one of the requirement's sectors
+    (compared by number). Empty requirement sectors -> matches everything."""
+    if not sectors:
+        return True
+    wanted = {_sector_num(s) for s in sectors if _sector_num(s)}
+    got = _sector_num(sector)
+    return bool(got and got in wanted)
 
 
 def size_closeness(size_sqm, sizes_sqm, tolerance_pct) -> float:
@@ -108,16 +119,12 @@ def price_fit(price, budget_min, budget_max, softcap_pct=BUDGET_SOFTCAP_PCT) -> 
 
 
 def sector_fit(sector, sectors, miss_fit=SECTOR_MISS_FIT) -> float:
-    """1.0 if listing sector matches any required sector (case/space-insensitive);
-    empty requirement sectors -> 1.0 (all of Noida). Non-match -> miss_fit.
-    Missing/None listing sector with a constrained requirement -> miss_fit.
-    """
+    """1.0 if the listing's sector number is one of the required sectors; empty
+    requirement sectors -> 1.0 (all of Noida); otherwise miss_fit. (When sectors are
+    set, matches_for hard-excludes non-matches, so this mainly affects ranking.)"""
     if not sectors:
         return 1.0
-    if not sector:
-        return miss_fit
-    wanted = {_norm_sector(s) for s in sectors}
-    return 1.0 if _norm_sector(sector) in wanted else miss_fit
+    return 1.0 if sector_matches(sector, sectors) else miss_fit
 
 
 def property_type_fit(title, property_type, miss_fit=TYPE_MISS_FIT) -> float:
@@ -177,9 +184,14 @@ def score(listing: dict, requirement: dict, cfg: dict | None = None) -> float:
 def matches_for(requirement: dict, listings: list[dict],
                 cfg: dict | None = None) -> list[tuple[dict, float]]:
     """(listing, score) pairs scoring >= threshold, sorted by score descending.
-    cfg overrides the knobs incl. the threshold (D17); omit for DEFAULTS."""
+    cfg overrides the knobs incl. the threshold (D17); omit for DEFAULTS.
+    If the requirement specifies sectors, listings outside them are HARD-excluded
+    (D24) — a stated location is treated as a requirement, not a soft preference."""
     c = _cfg(cfg)
-    scored = [(l, score(l, requirement, c)) for l in listings]
+    sectors = requirement.get("sectors") or []
+    pool = ([l for l in listings if sector_matches(l.get("sector"), sectors)]
+            if sectors else listings)
+    scored = [(l, score(l, requirement, c)) for l in pool]
     scored = [pair for pair in scored if pair[1] >= c["threshold"]]
     scored.sort(key=lambda pair: pair[1], reverse=True)
     return scored
