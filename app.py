@@ -303,6 +303,8 @@ def page_matches():
     req_filter = f2.selectbox("Requirement", ["All requirements"] + req_ids)
 
     rows = matches
+    if db.get_setting("noida_authority_only", 1):  # D21
+        rows = [m for m in rows if db.is_noida_authority(m)]
     if owner_filter != "All owners":
         rows = [m for m in rows if m.get("owner") == owner_filter]
     if req_filter != "All requirements":
@@ -321,11 +323,13 @@ def page_matches():
     st.write("")
 
     table = [{
+        "Photo": m.get("image_url") or "",
         "Score": round((m.get("score") or 0) * 100),
         "Title": m.get("title") or "(untitled listing)",
         "Price (Cr)": rupees_to_cr(m.get("price")),
         "Size (sqm)": m.get("size_sqm"),
         "Sector": m.get("sector") or "—",
+        "Advertiser": m.get("advertiser") or "—",
         "Owner": m.get("owner") or "—",
         "Req": m["requirement_id"],
         "Listing": m.get("url") or "",
@@ -333,11 +337,13 @@ def page_matches():
     st.dataframe(
         table, use_container_width=True, hide_index=True,
         column_config={
+            "Photo": st.column_config.ImageColumn("Photo", width="small"),
             "Score": st.column_config.ProgressColumn(
                 "Score", min_value=0, max_value=100, format="%d%%"),
             "Title": st.column_config.TextColumn("Title", width="large"),
             "Price (Cr)": st.column_config.NumberColumn("Price", format="₹ %.2f Cr"),
             "Size (sqm)": st.column_config.NumberColumn("Size", format="%.0f sqm"),
+            "Advertiser": st.column_config.TextColumn("Advertiser"),
             "Listing": st.column_config.LinkColumn("Listing", display_text="Open ↗"),
         })
     st.caption("Click any column header to sort. Use the ⤢ icon to expand full-screen.")
@@ -399,52 +405,114 @@ def page_system():
 
 # ============================================================== PAGE — Settings (D17)
 def page_settings():
-    _header("Settings", "Live matcher tuning. Saved to the DB; applied on the next run.")
+    _header("Settings", "Control how listings are scored and matched. "
+                        "Plain-English knobs — changes apply on the next refresh.")
     knobs = db.all_settings()
 
+    st.caption("💡 Every listing gets a **match score** from 0–100%. These settings decide "
+               "how that score is calculated and how strict the cut-off is. "
+               "Not sure? The defaults work well — use **Reset to defaults** anytime.")
+
     with st.form("settings_form"):
-        st.subheader("Match threshold")
-        threshold = st.slider("Minimum score to count as a match", 0.0, 1.0,
-                              float(knobs.get("threshold", 0.6)), 0.05)
+        # ---- 1. Strictness -------------------------------------------------------
+        st.subheader("1 · How strict should matching be?")
+        threshold_pct = st.slider(
+            "Only show listings scoring at least this high", 0, 100,
+            int(round(float(knobs.get("threshold", 0.6)) * 100)), 5, format="%d%%")
+        st.caption(f"Right now a listing needs **≥ {threshold_pct}%** to appear. "
+                   "Higher = fewer but better-fitting results; lower = more results, "
+                   "some loose.")
 
-        st.subheader("Scoring weights")
+        st.divider()
+        # ---- 2. What matters most ------------------------------------------------
+        st.subheader("2 · What matters most in a good match?")
+        st.caption("Set how much each factor counts. The exact numbers don't need to add "
+                   "up — we rebalance them to 100% for you (shown below).")
         wc1, wc2, wc3 = st.columns(3)
-        w_size = wc1.slider("Size", 0.0, 1.0, float(knobs.get("w_size", 0.4)), 0.05)
-        w_price = wc2.slider("Price", 0.0, 1.0, float(knobs.get("w_price", 0.4)), 0.05)
-        w_sector = wc3.slider("Sector", 0.0, 1.0, float(knobs.get("w_sector", 0.2)), 0.05)
+        w_size = wc1.slider("Right size", 0.0, 1.0,
+                            float(knobs.get("w_size", 0.4)), 0.05,
+                            help="How close the listing's area is to your target size.")
+        w_price = wc2.slider("Right price", 0.0, 1.0,
+                             float(knobs.get("w_price", 0.4)), 0.05,
+                             help="How well the price fits your budget.")
+        w_sector = wc3.slider("Right location", 0.0, 1.0,
+                              float(knobs.get("w_sector", 0.2)), 0.05,
+                              help="Whether it's in one of your chosen sectors.")
         w_sum = w_size + w_price + w_sector
-        if abs(w_sum - 1.0) > 1e-6:
-            st.warning(f"Weights sum to {w_sum:.2f} (ideal: 1.0). Scores may exceed 1; "
-                       "the threshold is calibrated for a sum of 1.0.")
+        if w_sum > 0:
+            st.caption(f"➡️ Balance used: **Size {w_size / w_sum:.0%} · "
+                       f"Price {w_price / w_sum:.0%} · Location {w_sector / w_sum:.0%}**")
         else:
-            st.caption("✓ Weights sum to 1.0")
+            st.warning("Set at least one factor above zero.")
 
-        st.subheader("Tolerances & freshness")
-        tc1, tc2 = st.columns(2)
-        budget_softcap_pct = tc1.slider("Budget soft-cap (fraction over max)", 0.0, 0.5,
-                                        float(knobs.get("budget_softcap_pct", 0.05)), 0.01)
-        sector_miss_fit = tc2.slider("Wrong-sector score", 0.0, 1.0,
-                                     float(knobs.get("sector_miss_fit", 0.3)), 0.05)
-        type_miss_fit = st.slider(
-            "Wrong property-type multiplier (0 = drop, D19)", 0.0, 1.0,
-            float(knobs.get("type_miss_fit", 0.0)), 0.05,
-            help="Score multiplier when a listing's title is clearly a DIFFERENT "
-                 "category than the requirement (e.g. a Plot in a House search). "
-                 "0 drops it entirely; raise it to keep wrong-type listings as low-ranked.")
-        stale_threshold_runs = st.number_input(
-            "Stale after N missed 6h runs", min_value=1, step=1,
-            value=int(knobs.get("stale_threshold_runs", 3)))
+        st.divider()
+        # ---- 3. How forgiving -----------------------------------------------------
+        st.subheader("3 · How forgiving should it be?")
+        over_budget_pct = st.slider(
+            "Allow listings priced over budget by up to…", 0, 50,
+            int(round(float(knobs.get("budget_softcap_pct", 0.05)) * 100)), 1,
+            format="%d%%")
+        st.caption(f"A listing up to **{over_budget_pct}% above** your max budget can still "
+                   "appear (ranked lower). E.g. {over} on a ₹4.50 Cr budget."
+                   .format(over=f"₹{4.5 * (1 + over_budget_pct / 100):.2f} Cr"))
 
-        if st.form_submit_button("Save settings", type="primary"):
-            for key, value in {
-                "threshold": threshold, "w_size": w_size, "w_price": w_price,
-                "w_sector": w_sector, "budget_softcap_pct": budget_softcap_pct,
-                "sector_miss_fit": sector_miss_fit, "type_miss_fit": type_miss_fit,
-                "stale_threshold_runs": stale_threshold_runs,
-            }.items():
-                db.set_setting(key, value)
-            st.success("Saved. Applies on the next scheduler run.")
-            st.rerun()
+        outside_sector_pct = st.slider(
+            "Credit for listings outside your chosen sectors", 0, 100,
+            int(round(float(knobs.get("sector_miss_fit", 0.3)) * 100)), 5, format="%d%%")
+        st.caption(f"A listing in a sector you didn't pick still earns **{outside_sector_pct}%** "
+                   "on the location factor. 0% = your sectors only; higher = nearby "
+                   "sectors keep showing. (No sectors chosen = everywhere counts fully.)")
+
+        wrong_type_choice = st.radio(
+            "Listings of a different property type than you asked for",
+            ["Hide them completely (recommended)", "Show them, but rank them low"],
+            index=0 if float(knobs.get("type_miss_fit", 0.0)) == 0 else 1,
+            help="E.g. a Plot showing up in a House search.")
+
+        noida_only = st.checkbox(
+            "Only Noida-Authority sectors & plots (exclude freehold / other authorities)",
+            value=bool(knobs.get("noida_authority_only", 1)),
+            help="Noida-Authority allotments are leasehold and sit in numbered Noida "
+                 "sectors. Unchecking also lets in freehold private colonies, YEIDA, "
+                 "Greater Noida, etc.")
+
+        st.divider()
+        # ---- 4. Freshness ---------------------------------------------------------
+        st.subheader("4 · When is a listing 'gone'?")
+        stale_runs = st.slider(
+            "Hide a listing after it's missing for this many refresh cycles", 1, 12,
+            int(knobs.get("stale_threshold_runs", 3)), 1)
+        st.caption(f"One cycle = 6 hours, so this hides listings unseen for about "
+                   f"**{stale_runs * 6 / 24:.1f} days**.")
+
+        st.write("")
+        c1, c2 = st.columns([1, 1])
+        save = c1.form_submit_button("💾 Save settings", type="primary",
+                                     use_container_width=True)
+        reset = c2.form_submit_button("↩️ Reset to defaults", use_container_width=True)
+
+    if save:
+        # Normalize the importance sliders to sum to 1.0 (the matcher + threshold are
+        # calibrated for that), so the user never has to make them add up.
+        total = w_size + w_price + w_sector or 1.0
+        for key, value in {
+            "threshold": threshold_pct / 100,
+            "w_size": w_size / total, "w_price": w_price / total,
+            "w_sector": w_sector / total,
+            "budget_softcap_pct": over_budget_pct / 100,
+            "sector_miss_fit": outside_sector_pct / 100,
+            "type_miss_fit": 0.0 if wrong_type_choice.startswith("Hide") else 0.3,
+            "noida_authority_only": 1 if noida_only else 0,
+            "stale_threshold_runs": stale_runs,
+        }.items():
+            db.set_setting(key, value)
+        st.success("Saved. Applies on the next refresh / scheduled run.")
+        st.rerun()
+    if reset:
+        for key, value in db.SEED_SETTINGS.items():
+            db.set_setting(key, value)
+        st.success("Settings reset to defaults.")
+        st.rerun()
 
 
 # ----------------------------------------------------------------------------- dispatch

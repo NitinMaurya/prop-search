@@ -98,6 +98,10 @@ def run_once() -> dict:
 
         # ---- STAGE 3 MATCH ------------------------------------------------------
         listings = db.list_active_listings()
+        if db.get_setting("noida_authority_only", 1):  # D21: keep only NOIDA authority
+            before = len(listings)
+            listings = [l for l in listings if db.is_noida_authority(l)]
+            log.info("NOIDA-authority filter: %d -> %d listings", before, len(listings))
         for req in requirements:
             for listing, sc in matcher.matches_for(req, listings, cfg):
                 try:

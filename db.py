@@ -61,6 +61,7 @@ SEED_SETTINGS = {
     "budget_softcap_pct": 0.05,  # allowed % over budget_max before price_fit hits 0
     "sector_miss_fit": 0.3,      # score for a non-matching sector
     "type_miss_fit": 0.0,        # D19: multiplier for a wrong-category listing (0 = drop)
+    "noida_authority_only": 1,   # D21: keep only NOIDA-authority, non-freehold listings
     "stale_threshold_runs": 3,   # Q3: missed runs before a listing is marked stale
 }
 
@@ -138,6 +139,10 @@ def init() -> None:
                 sector        TEXT,
                 raw_location  TEXT,
                 posted_date   TEXT,
+                image_url     TEXT,
+                advertiser    TEXT,
+                ownership     TEXT,
+                approving_authority TEXT,
                 fingerprint   TEXT UNIQUE NOT NULL,
                 first_seen_at TEXT NOT NULL,
                 last_seen_at  TEXT NOT NULL,
@@ -173,6 +178,11 @@ def init() -> None:
             );
             """
         )
+        # Migrate older DBs that predate the image_url/advertiser columns (D20).
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(listings)")}
+        for col in ("image_url", "advertiser", "ownership", "approving_authority"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE listings ADD COLUMN {col} TEXT")
         for key, value in SEED_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                          (key, value))
@@ -300,17 +310,24 @@ def upsert_listing(listing: dict) -> int:
             "SELECT id FROM listings WHERE fingerprint = ?", (fp,)).fetchone()
         if existing:
             conn.execute("UPDATE listings SET last_seen_at = ?, is_stale = 0, "
-                         "price = ?, url = ? WHERE id = ?",
-                         (now, listing.get("price"), listing.get("url"), existing["id"]))
+                         "price = ?, url = ?, image_url = ?, advertiser = ?, "
+                         "ownership = ?, approving_authority = ? WHERE id = ?",
+                         (now, listing.get("price"), listing.get("url"),
+                          listing.get("image_url"), listing.get("advertiser"),
+                          listing.get("ownership"), listing.get("approving_authority"),
+                          existing["id"]))
             return existing["id"]
         cur = conn.execute(
             "INSERT INTO listings (portal_id, external_id, url, title, price, size_sqm, "
-            "sector, raw_location, posted_date, fingerprint, first_seen_at, "
-            "last_seen_at, is_stale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            "sector, raw_location, posted_date, image_url, advertiser, ownership, "
+            "approving_authority, fingerprint, first_seen_at, last_seen_at, is_stale) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
             (listing["portal_id"], listing.get("external_id"), listing.get("url"),
              listing.get("title"), listing.get("price"), listing.get("size_sqm"),
              listing.get("sector"), listing.get("raw_location"),
-             listing.get("posted_date"), fp, now, now),
+             listing.get("posted_date"), listing.get("image_url"),
+             listing.get("advertiser"), listing.get("ownership"),
+             listing.get("approving_authority"), fp, now, now),
         )
         return cur.lastrowid
 
@@ -319,6 +336,14 @@ def list_active_listings() -> list[dict]:
     with connect() as conn:
         return [dict(r) for r in
                 conn.execute("SELECT * FROM listings WHERE is_stale = 0")]
+
+
+def is_noida_authority(listing: dict) -> bool:
+    """True if a listing is a NOIDA-Authority, non-freehold property (D21).
+    Used to keep only authority sectors/plots out of freehold private colonies."""
+    auth = str(listing.get("approving_authority") or "").strip().upper()
+    ownership = str(listing.get("ownership") or "").strip().lower()
+    return auth == "NOIDA" and ownership != "freehold"
 
 
 def mark_stale(threshold_runs=3) -> int:

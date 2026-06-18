@@ -191,6 +191,25 @@ Legacy free-text values (older rows stored `"kothi"`) map onto a key via `catego
 `type_miss_fit` is a live DB knob (D17) on the Settings page — raise it above 0 to keep
 wrong-type listings as low-ranked instead of dropping them.
 
+## D20 — MagicBricks JSON API (auth) + images/advertiser
+**Decision:** When `MB_COOKIE` (a logged-in MagicBricks session, from `.env`) is set, the
+MagicBricks fetcher calls the **`mbsrp/propertySearch.html` JSON API** instead of scraping
+HTML; the Playwright HTML path remains the no-cookie fallback. The Parser auto-detects
+JSON (`{`-prefixed raw) vs HTML. JSON carries **images** (`image`/`allImgPath`) and
+**advertiser** (`companyname`/`oname` + `userType`) directly, stored in new
+`listings.image_url` / `listings.advertiser` columns (added via idempotent `ALTER TABLE`
+migration in `init()`). Shown in the Matches table (ImageColumn + Advertiser).
+propertyType IDs (confirmed live): house=`10001,10017`, plot=`10000`,
+apartment=`10002,10003,10021,10022`. Size = `coveredArea` × `covAreaUnit` factor → sqm
+(D18); `12801`=sqm, `12800`=sqft, `12803`=sqyrd.
+**Why:** JSON is far more robust than CSS selectors and is the only reliable source of
+images + advertiser (HTML cards lazy-load images; contacts sit behind login). The user
+provided a logged-in session and live API responses to build against.
+**Implication:** `MB_COOKIE` goes in `.env` (gitignored), never committed; cookies expire
+so the user refreshes them periodically. Can't be exercised from a datacenter IP (Akamai,
+D16) — runs on the user's residential machine. Phone numbers still require per-listing
+OTP and are out of scope.
+
 ---
 
 ## Open questions (resolve before/while building)
