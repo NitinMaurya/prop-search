@@ -9,11 +9,13 @@ from psycopg_pool import ConnectionPool
 from . import cache
 from .config import settings
 
-# TTLs (seconds). Matches is invalidated on the user's own writes, so it can be longer;
-# the bound only matters for cross-process changes (a scrape's new matches).
-MATCHES_TTL = 90
+# TTLs (seconds). The matches cache is invalidated on the user's OWN writes immediately,
+# and keyed by the scrape "generation" (see _scrape_version) so a background scrape busts
+# it too — so the TTL is just a long safety backstop, not the freshness mechanism.
+MATCHES_TTL = 3600                # 1h backstop
 SETTINGS_TTL = 300
 SYSTEM_TTL = 30
+SCRAPE_VERSION_TTL = 20           # how often we re-check for a new scrape (one tiny query)
 
 _pool: ConnectionPool | None = None
 
@@ -81,15 +83,31 @@ def invalidate_matches(uid: str) -> None:
     cache.invalidate(_matches_key(uid))
 
 
+def _scrape_version() -> str:
+    """A cheap fingerprint of scrape state (run count + last finish). Changes when a
+    scrape starts or finishes, so a cached matches list keyed by it busts automatically.
+    Itself cached for SCRAPE_VERSION_TTL so it costs ~one tiny query per that window."""
+    v = cache.get("scrape_version")
+    if v is not None:
+        return v
+    with pool().connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) AS n, coalesce(max(finished_at)::text, '') AS t FROM runs")
+        row = cur.fetchone()
+    v = f"{row['n']}:{row['t']}"
+    cache.put("scrape_version", v, SCRAPE_VERSION_TTL)
+    return v
+
+
 def list_matches(uid: str) -> list[dict]:
     """The user's matches, enriched with listing fields + their feedback/tracking.
 
-    Cached per user (TTL); invalidated on that user's feedback/tracking/requirement
-    writes. Single round-trip: the NOIDA-authority filter and is_new flag are folded
-    into SQL via subqueries, so a cache miss is still one DB hop."""
-    cached = cache.get(_matches_key(uid))
-    if cached is not None:
-        return cached
+    Cached per user and keyed by the scrape generation: invalidated immediately on the
+    user's own writes, and busted within ~SCRAPE_VERSION_TTL of any background scrape.
+    Single round-trip on a miss (NOIDA filter + is_new folded into SQL)."""
+    ver = _scrape_version()
+    entry = cache.get(_matches_key(uid))
+    if entry is not None and entry[0] == ver:
+        return entry[1]
     with pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
             "WITH cfg AS (SELECT value FROM settings WHERE key = 'noida_authority_only'), "
@@ -109,7 +127,7 @@ def list_matches(uid: str) -> list[dict]:
             "ORDER BY m.score DESC NULLS LAST",
             {"uid": uid})
         rows = cur.fetchall()
-    cache.put(_matches_key(uid), rows, MATCHES_TTL)
+    cache.put(_matches_key(uid), (ver, rows), MATCHES_TTL)
     return rows
 
 
