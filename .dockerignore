@@ -1,0 +1,12 @@
+**/.venv
+**/node_modules
+**/.next
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.local
+.git
+apps/web
+graphify-out
+data
+logs
