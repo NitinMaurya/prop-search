@@ -1,0 +1,13 @@
+{
+  "name": "prop-search",
+  "private": true,
+  "version": "2.0.0",
+  "description": "prop-search v2 — Noida property finder (Supabase + FastAPI + Next.js + scraper node)",
+  "workspaces": [
+    "apps/web",
+    "packages/types"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

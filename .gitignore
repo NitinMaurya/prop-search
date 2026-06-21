@@ -7,3 +7,20 @@ data/.pw-*-profile/
 logs/*.log
 .DS_Store
 graphify-out/
+
+# v2: node / next
+node_modules/
+.next/
+out/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# v2: env files (any app)
+.env.local
+**/.env
+**/.env.local
+
+# v2: supabase cli
+.branches/
+.temp/
