@@ -82,12 +82,13 @@ function MatchesInner() {
   }, [imaged]);
   const [lb, setLb] = useState<number | null>(null);
 
+  const zoom = (id: number) => { if (idxOf.has(id)) setLb(idxOf.get(id)!); };
   const renderBlock = (rows: Match[]) =>
     view === "table"
-      ? <MatchTable rows={rows} />
+      ? <MatchTable rows={rows} onZoom={zoom} />
       : <Grid>{rows.map((m) => (
           <MatchCard key={m.match_id} m={m}
-            onZoom={idxOf.has(m.id) ? () => setLb(idxOf.get(m.id)!) : undefined} />
+            onZoom={idxOf.has(m.id) ? () => zoom(m.id) : undefined} />
         ))}</Grid>;
 
   return (
