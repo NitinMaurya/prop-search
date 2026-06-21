@@ -4,7 +4,9 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { sectorNum } from "@/lib/format";
+import type { Match } from "@/lib/types";
 import { MatchCard } from "@/components/MatchCard";
+import { MatchTable } from "@/components/MatchTable";
 import { PageHeader } from "@/components/PageHeader";
 
 const SHOW = [
@@ -27,6 +29,7 @@ export default function MatchesPage() {
   const [sort, setSort] = useState("best");
   const [sector, setSector] = useState("");
   const [group, setGroup] = useState(false);
+  const [view, setView] = useState<"cards" | "table">("cards");
 
   const { data: matches = [], isLoading, error } = useQuery({
     queryKey: ["matches", show, sort, sector],
@@ -53,9 +56,24 @@ export default function MatchesPage() {
       a[0] === "—" ? 1 : b[0] === "—" ? -1 : Number(a[0]) - Number(b[0]));
   }, [group, matches]);
 
+  const renderBlock = (rows: Match[]) =>
+    view === "table"
+      ? <MatchTable rows={rows} />
+      : <Grid>{rows.map((m) => <MatchCard key={m.match_id} m={m} />)}</Grid>;
+
   return (
     <div>
-      <PageHeader title="Matches" subtitle="Listings ranked by how well they fit your requirements." />
+      <div className="flex items-start justify-between gap-4">
+        <PageHeader title="Matches" subtitle="Listings ranked by how well they fit your requirements." />
+        <div className="flex rounded-xl border border-[var(--color-line)] overflow-hidden shrink-0 mt-1">
+          {(["cards", "table"] as const).map((v) => (
+            <button key={v} onClick={() => setView(v)}
+              className={`px-3.5 py-2 text-sm font-bold ${view === v ? "ps-btn-grad" : "text-[var(--color-muted)] hover:bg-slate-50"}`}>
+              {v === "cards" ? "▦ Cards" : "☰ Table"}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="flex flex-wrap items-end gap-3 mb-5">
         <Select label="Show" value={show} onChange={setShow}
@@ -87,12 +105,10 @@ export default function MatchesPage() {
               📍 {sec === "—" ? "Other" : `Sector ${sec}`}
               <span className="text-xs font-bold text-[var(--color-brand-dk)] bg-[var(--color-brand-soft)] rounded-full px-2.5 py-0.5">{rows.length}</span>
             </h2>
-            <Grid>{rows.map((m) => <MatchCard key={m.match_id} m={m} />)}</Grid>
+            {renderBlock(rows)}
           </section>
         ))
-      ) : (
-        <Grid>{matches.map((m) => <MatchCard key={m.match_id} m={m} />)}</Grid>
-      )}
+      ) : renderBlock(matches)}
     </div>
   );
 }

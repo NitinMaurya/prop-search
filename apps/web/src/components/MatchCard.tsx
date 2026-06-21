@@ -3,14 +3,23 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { mapsUrl, rupeesToCr } from "@/lib/format";
-import type { Match } from "@/lib/types";
+import type { Match, Verdict } from "@/lib/types";
+
+const PASS_REASONS: [string, string][] = [
+  ["over_budget", "💸 Over budget"],
+  ["fake", "🎭 Fake / spam"],
+  ["location", "📍 Location"],
+  ["condition", "🏚️ Size / condition"],
+  ["disliked", "👎 Didn’t like"],
+];
 
 export function MatchCard({ m }: { m: Match }) {
   const qc = useQueryClient();
   const invalidate = () => qc.invalidateQueries({ queryKey: ["matches"] });
 
   const feedback = useMutation({
-    mutationFn: (v: "like" | "nope") => api.setFeedback(m.id, v),
+    mutationFn: ({ v, reason }: { v: Verdict; reason?: string }) =>
+      api.setFeedback(m.id, v, reason),
     onSuccess: invalidate,
   });
   const contacted = useMutation({
@@ -22,11 +31,12 @@ export function MatchCard({ m }: { m: Match }) {
   const isContacted = !!m.contacted_at;
 
   return (
-    <div className={`ps-card overflow-hidden flex flex-col ${m.verdict === "nope" ? "opacity-60" : ""}`}>
-      <div className="relative aspect-[16/10] bg-[var(--color-brand-soft)]">
+    <div className={`ps-card overflow-hidden flex flex-col h-full ${m.verdict === "nope" ? "opacity-60 hover:opacity-100" : ""}`}>
+      {/* photo — fixed aspect, never shrinks */}
+      <div className="relative shrink-0 aspect-[16/10] bg-[var(--color-brand-soft)]">
         {m.image_url
           ? // eslint-disable-next-line @next/next/no-img-element
-            <img src={m.image_url} alt="" className="w-full h-full object-cover" />
+            <img src={m.image_url} alt="" className="w-full h-full object-cover block" />
           : <div className="w-full h-full flex items-center justify-center text-4xl opacity-50">🏠</div>}
         {m.is_new && (
           <span className="absolute top-2.5 left-2.5 text-xs font-extrabold text-white px-2.5 py-1 rounded-full"
@@ -36,20 +46,25 @@ export function MatchCard({ m }: { m: Match }) {
           className={`absolute top-2.5 right-2.5 text-xs font-bold px-2.5 py-1.5 rounded-full border ${
             isContacted ? "bg-blue-600 text-white border-blue-600" : "bg-white/90 text-blue-600 border-white/70"
           }`}>
-          {isContacted ? "✅ Contacted" : "📞 Contact"}
+          {isContacted ? "✅ Contacted" : "📞 Contact"}{m.notes ? " 📝" : ""}
         </button>
         {m.sector && (
           <a href={mapsUrl(m.sector)} target="_blank" rel="noopener"
-            className="absolute left-2.5 bottom-2.5 text-xs font-semibold text-white bg-black/70 rounded-lg px-2.5 py-1 flex items-center gap-1.5 no-underline">
+            className="absolute left-2.5 bottom-2.5 text-xs font-semibold text-white bg-black/70 rounded-lg px-2.5 py-1 flex items-center gap-1.5 no-underline hover:bg-blue-600/90">
             📍 {m.sector} 🗺️
           </a>
         )}
       </div>
+
+      {/* body — fixed-height sections so every card is identical regardless of content */}
       <div className="p-4 flex flex-col flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-2xl font-black tracking-tight">{rupeesToCr(m.price) || "On request"}</span>
+          <a href={m.url ?? "#"} target="_blank" rel="noopener"
+            className="text-2xl font-black tracking-tight no-underline text-[var(--color-ink)] hover:text-[var(--color-brand)]">
+            {rupeesToCr(m.price) || "On request"}
+          </a>
           {m.size_sqm && (
-            <span className="text-xs font-bold rounded-full px-3 py-1 bg-[var(--color-brand-soft)] text-[var(--color-brand)]">
+            <span className="text-xs font-bold rounded-full px-3 py-1 bg-[var(--color-brand-soft)] text-[var(--color-brand)] shrink-0">
               {Math.round(m.size_sqm)} sqm
             </span>
           )}
@@ -57,30 +72,45 @@ export function MatchCard({ m }: { m: Match }) {
         <div className="text-sm font-semibold text-slate-700 mt-1 line-clamp-2 min-h-[2.5em]">
           {m.title ?? "Untitled listing"}
         </div>
-        {m.description && (
-          <p className="text-xs text-[var(--color-muted)] mt-1 line-clamp-2">{m.description}</p>
-        )}
+        <p className="text-xs text-[var(--color-muted)] mt-1 line-clamp-2 min-h-[2.4em]">
+          {m.description ?? ""}
+        </p>
+
         <div className="mt-auto pt-3 flex items-center justify-between">
-          <span className="text-xs text-[var(--color-muted)] font-semibold">
+          <span className="text-xs text-[var(--color-muted)] font-semibold truncate">
             {m.owner ? `Req · ${m.owner}` : `Req #${m.requirement_id}`}
           </span>
           {pct != null && (
-            <span className={`text-xs font-extrabold rounded-full px-2.5 py-1 ${
+            <span className={`shrink-0 text-xs font-extrabold rounded-full px-2.5 py-1 ${
               pct >= 80 ? "bg-green-100 text-green-700"
                 : pct >= 60 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"
             }`}>{pct}% match</span>
           )}
         </div>
+
         <div className="flex gap-2 mt-3">
-          <button onClick={() => feedback.mutate("nope")}
+          <button onClick={() => feedback.mutate({ v: "nope" })}
             className={`flex-1 py-2 rounded-xl font-bold text-sm border ${
               m.verdict === "nope" ? "bg-red-500 text-white border-red-500" : "text-red-600 border-red-200 hover:bg-red-50"
             }`}>👎 Pass</button>
-          <button onClick={() => feedback.mutate("like")}
+          <button onClick={() => feedback.mutate({ v: "like" })}
             className={`flex-1 py-2 rounded-xl font-bold text-sm border ${
               m.verdict === "like" ? "bg-green-600 text-white border-green-600" : "text-green-600 border-green-200 hover:bg-green-50"
             }`}>👍 Like</button>
         </div>
+
+        {/* pass reasons appear only when passed */}
+        {m.verdict === "nope" && (
+          <div className="flex flex-wrap gap-1.5 mt-2.5">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-muted)] self-center">Why?</span>
+            {PASS_REASONS.map(([code, label]) => (
+              <button key={code} onClick={() => feedback.mutate({ v: "nope", reason: code })}
+                className={`text-xs font-semibold px-2.5 py-1 rounded-full border whitespace-nowrap ${
+                  m.pass_reason === code ? "bg-red-500 text-white border-red-500" : "bg-white border-[var(--color-line)] hover:border-red-300"
+                }`}>{label}</button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
