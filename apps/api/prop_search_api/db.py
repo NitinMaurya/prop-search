@@ -15,7 +15,8 @@ from .config import settings
 MATCHES_TTL = 3600                # 1h backstop
 SETTINGS_TTL = 300
 SYSTEM_TTL = 30
-SCRAPE_VERSION_TTL = 20           # how often we re-check for a new scrape (one tiny query)
+SCRAPE_VERSION_TTL = 300          # re-check for a new scrape every 5 min (one tiny query)
+                                  # — fine since scrapes run every 6h
 
 _pool: ConnectionPool | None = None
 
