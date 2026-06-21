@@ -58,7 +58,9 @@ def start_scrape_bg() -> None:
     while it runs. Output goes to the log file (not a pipe — a pipe could fill its buffer
     and deadlock a multi-minute scrape); results are read back from the DB on completion."""
     import streamlit as _st
-    logf = open(os.path.join(_APP_DIR, "logs", "scheduler.log"), "a")
+    logs_dir = os.path.join(_APP_DIR, "logs")
+    os.makedirs(logs_dir, exist_ok=True)  # logs/ is gitignored, so absent on fresh deploys
+    logf = open(os.path.join(logs_dir, "scheduler.log"), "a")
     proc = subprocess.Popen(
         [sys.executable, "scheduler.py", "--once"], cwd=_APP_DIR,
         stdout=logf, stderr=subprocess.STDOUT)
