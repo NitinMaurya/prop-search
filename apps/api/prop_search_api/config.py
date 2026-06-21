@@ -4,7 +4,8 @@ import os
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(".env")
+    load_dotenv(".env.local", override=True)  # also honor the Next-style filename
 except ImportError:
     pass
 
