@@ -20,7 +20,7 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
 /** Pulsing placeholders shaped like the match cards, for the Matches grid. */
 export function SkeletonCards({ n = 8 }: { n?: number }) {
   return (
-    <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%,250px),1fr))" }}>
+    <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%,320px),1fr))" }}>
       {Array.from({ length: n }).map((_, i) => (
         <div key={i} className="ps-card overflow-hidden">
           <div className="aspect-[16/10] bg-slate-200 animate-pulse" />

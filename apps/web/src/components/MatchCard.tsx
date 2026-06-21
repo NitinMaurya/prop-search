@@ -18,7 +18,7 @@ export function MatchCard({ m, onZoom }: { m: Match; onZoom?: () => void }) {
       )}
       {/* photo — FIXED height (not aspect) so image size can never change the card; never
           shrinks; object-cover crops to fill. Click to zoom (gallery). */}
-      <div className="relative z-[2] shrink-0 h-[180px] bg-[var(--color-brand-soft)]">
+      <div className="relative z-[2] shrink-0 h-[200px] bg-[var(--color-brand-soft)]">
         {m.image_url
           ? // eslint-disable-next-line @next/next/no-img-element
             <img src={m.image_url} alt="" onClick={onZoom}
