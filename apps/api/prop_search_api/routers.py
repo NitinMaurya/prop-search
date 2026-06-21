@@ -73,15 +73,8 @@ def get_matches(
     sort: str = Query(default="best"),
     sectors: str = Query(default="", description="comma-separated sector numbers"),
 ):
+    # Single DB round-trip: NOIDA filter + is_new are computed in SQL (see db.list_matches).
     rows = db.list_matches(uid)
-    settings = db.get_settings()
-    since = db.latest_run_start()
-
-    # NOIDA-authority filter (D21), if enabled globally.
-    if str(settings.get("noida_authority_only", "1")).lower() in ("1", "true", "yes"):
-        rows = [m for m in rows
-                if str(m.get("approving_authority") or "").strip().upper() == "NOIDA"
-                and str(m.get("ownership") or "").strip().lower() != "freehold"]
 
     if requirement_id is not None:
         rows = [m for m in rows if m["requirement_id"] == requirement_id]
@@ -99,7 +92,6 @@ def get_matches(
         for k in ("first_seen_at", "contacted_at"):
             if m.get(k) is not None and not isinstance(m[k], str):
                 m[k] = m[k].isoformat()
-        m["is_new"] = bool(since and (m.get("first_seen_at") or "") >= since)
     return rows
 
 

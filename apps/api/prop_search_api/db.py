@@ -61,27 +61,30 @@ def delete_requirement(uid: str, req_id: int) -> bool:
 
 # ----------------------------------------------------------------- matches
 def list_matches(uid: str) -> list[dict]:
-    """The user's matches, enriched with listing fields + their feedback/tracking."""
+    """The user's matches, enriched with listing fields + their feedback/tracking.
+
+    Single round-trip: the NOIDA-authority filter (the noida_authority_only setting) and
+    the is_new flag (first seen in the latest run) are folded into SQL via subqueries, so
+    the API doesn't pay extra DB hops (this matters a lot when the DB is far away)."""
     with pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
+            "WITH cfg AS (SELECT value FROM settings WHERE key = 'noida_authority_only'), "
+            "last_run AS (SELECT max(started_at) AS ts FROM runs) "
             "SELECT m.id AS match_id, m.requirement_id, m.score, l.*, "
             "r.owner AS owner, f.verdict AS verdict, f.reason AS pass_reason, "
-            "t.contacted_at AS contacted_at, t.notes AS notes "
+            "t.contacted_at AS contacted_at, t.notes AS notes, "
+            "(l.first_seen_at >= (SELECT ts FROM last_run)) AS is_new "
             "FROM matches m "
             "JOIN requirements r ON r.id = m.requirement_id AND r.user_id = %(uid)s "
             "JOIN listings l ON l.id = m.listing_id "
             "LEFT JOIN feedback f ON f.listing_id = l.id AND f.user_id = %(uid)s "
             "LEFT JOIN tracking t ON t.listing_id = l.id AND t.user_id = %(uid)s "
+            "WHERE coalesce((SELECT value FROM cfg), '0') NOT IN ('1','true','yes','on') "
+            "   OR (upper(coalesce(l.approving_authority,'')) = 'NOIDA' "
+            "       AND lower(coalesce(l.ownership,'')) <> 'freehold') "
             "ORDER BY m.score DESC NULLS LAST",
             {"uid": uid})
         return cur.fetchall()
-
-
-def latest_run_start() -> str | None:
-    with pool().connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT started_at FROM runs ORDER BY started_at DESC LIMIT 1")
-        row = cur.fetchone()
-        return row["started_at"].isoformat() if row and row["started_at"] else None
 
 
 # ----------------------------------------------------------------- feedback (D29)
