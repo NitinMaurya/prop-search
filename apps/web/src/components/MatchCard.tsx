@@ -37,7 +37,7 @@ export function MatchCard({ m, onZoom }: { m: Match; onZoom?: () => void }) {
         {m.sector && (
           <a href={mapsUrl(m.sector)} target="_blank" rel="noopener"
             className="absolute left-2.5 bottom-2.5 text-xs font-semibold text-white bg-black/70 rounded-lg px-2.5 py-1 flex items-center gap-1.5 no-underline hover:bg-blue-600/90">
-            📍 {m.sector} 🗺️
+            📍 {m.sector}
           </a>
         )}
       </div>

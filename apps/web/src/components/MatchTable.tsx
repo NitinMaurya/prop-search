@@ -63,7 +63,7 @@ function Row({ m, onZoom }: { m: Match; onZoom?: (id: number) => void }) {
         <div className="text-xs text-[var(--color-muted)] mt-0.5 truncate">
           {m.sector && (
             <a href={mapsUrl(m.sector)} target="_blank" rel="noopener"
-              className="font-semibold text-[var(--color-brand-dk)] hover:underline">📍 {m.sector} 🗺️</a>
+              className="font-semibold text-[var(--color-brand-dk)] hover:underline">📍 {m.sector}</a>
           )}
           {m.advertiser ? ` · ${m.advertiser}` : ""}
         </div>
