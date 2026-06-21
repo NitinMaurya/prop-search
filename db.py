@@ -143,6 +143,7 @@ def init() -> None:
                 advertiser    TEXT,
                 ownership     TEXT,
                 approving_authority TEXT,
+                description   TEXT,
                 fingerprint   TEXT UNIQUE NOT NULL,
                 first_seen_at TEXT NOT NULL,
                 last_seen_at  TEXT NOT NULL,
@@ -176,13 +177,37 @@ def init() -> None:
                 key   TEXT PRIMARY KEY,
                 value REAL NOT NULL
             );
+
+            -- Shortlist: user's like/dislike per listing (UI feature). One verdict per
+            -- listing; persists independently of matches so liked homes can be followed
+            -- up later even after they leave the matches view.
+            CREATE TABLE IF NOT EXISTS feedback (
+                listing_id INTEGER PRIMARY KEY REFERENCES listings(id) ON DELETE CASCADE,
+                verdict    TEXT NOT NULL,            -- 'like' | 'nope'
+                reason     TEXT,                     -- why passed: over_budget|fake|... (NULL otherwise)
+                updated_at TEXT NOT NULL
+            );
+
+            -- Follow-up tracking (D29): which listings you've contacted + free-text notes.
+            -- Independent of like/pass so you can track a listing without rating it.
+            CREATE TABLE IF NOT EXISTS tracking (
+                listing_id   INTEGER PRIMARY KEY REFERENCES listings(id) ON DELETE CASCADE,
+                contacted_at TEXT,                   -- ISO ts when marked contacted, NULL = not
+                notes        TEXT,                    -- free-text follow-up notes
+                updated_at   TEXT NOT NULL
+            );
             """
         )
         # Migrate older DBs that predate the image_url/advertiser columns (D20).
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(listings)")}
-        for col in ("image_url", "advertiser", "ownership", "approving_authority"):
+        for col in ("image_url", "advertiser", "ownership", "approving_authority",
+                    "description"):
             if col not in cols:
                 conn.execute(f"ALTER TABLE listings ADD COLUMN {col} TEXT")
+        # Migrate older DBs that predate the feedback.reason column (D29).
+        fb_cols = {r["name"] for r in conn.execute("PRAGMA table_info(feedback)")}
+        if "reason" not in fb_cols:
+            conn.execute("ALTER TABLE feedback ADD COLUMN reason TEXT")
         for key, value in SEED_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                          (key, value))
@@ -241,6 +266,13 @@ def update_requirement(req_id, **fields) -> None:
 def deactivate_requirement(req_id) -> None:
     with connect() as conn:
         conn.execute("UPDATE requirements SET active = 0 WHERE id = ?", (req_id,))
+
+
+def delete_requirement(req_id) -> None:
+    """Permanently remove a requirement (CRUD delete). Matches reference requirement_id
+    but have no FK cascade here, so they simply stop being tied to a live requirement."""
+    with connect() as conn:
+        conn.execute("DELETE FROM requirements WHERE id = ?", (req_id,))
 
 
 # ------------------------------------------------------------------------------ portals
@@ -311,23 +343,26 @@ def upsert_listing(listing: dict) -> int:
         if existing:
             conn.execute("UPDATE listings SET last_seen_at = ?, is_stale = 0, "
                          "price = ?, url = ?, image_url = ?, advertiser = ?, "
-                         "ownership = ?, approving_authority = ? WHERE id = ?",
+                         "ownership = ?, approving_authority = ?, description = ? "
+                         "WHERE id = ?",
                          (now, listing.get("price"), listing.get("url"),
                           listing.get("image_url"), listing.get("advertiser"),
                           listing.get("ownership"), listing.get("approving_authority"),
-                          existing["id"]))
+                          listing.get("description"), existing["id"]))
             return existing["id"]
         cur = conn.execute(
             "INSERT INTO listings (portal_id, external_id, url, title, price, size_sqm, "
             "sector, raw_location, posted_date, image_url, advertiser, ownership, "
-            "approving_authority, fingerprint, first_seen_at, last_seen_at, is_stale) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            "approving_authority, description, fingerprint, first_seen_at, last_seen_at, "
+            "is_stale) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
             (listing["portal_id"], listing.get("external_id"), listing.get("url"),
              listing.get("title"), listing.get("price"), listing.get("size_sqm"),
              listing.get("sector"), listing.get("raw_location"),
              listing.get("posted_date"), listing.get("image_url"),
              listing.get("advertiser"), listing.get("ownership"),
-             listing.get("approving_authority"), fp, now, now),
+             listing.get("approving_authority"), listing.get("description"),
+             fp, now, now),
         )
         return cur.lastrowid
 
@@ -381,6 +416,105 @@ def unnotified_matches() -> list[dict]:
 def mark_notified(match_id) -> None:
     with connect() as conn:
         conn.execute("UPDATE matches SET notified = 1 WHERE id = ?", (match_id,))
+
+
+# ----------------------------------------------------------------- shortlist / feedback
+def set_feedback(listing_id, verdict, reason=None) -> None:
+    """Record a like/dislike for a listing, optionally with a pass reason (D29).
+    verdict must be 'like' or 'nope'. Toggle rules:
+      • Like / Pass button (reason=None): clicking the active verdict again clears it.
+      • A pass-reason chip (verdict='nope', reason set): sets the reason; re-clicking the
+        same reason clears just the reason (the listing stays passed)."""
+    if verdict not in ("like", "nope"):
+        return
+    with connect() as conn:
+        row = conn.execute("SELECT verdict, reason FROM feedback WHERE listing_id = ?",
+                           (listing_id,)).fetchone()
+        if verdict == "nope" and reason is not None:
+            # reason chip: keep the pass, set/toggle the reason
+            new_reason = None if (row and row["reason"] == reason) else reason
+            conn.execute(
+                "INSERT INTO feedback (listing_id, verdict, reason, updated_at) "
+                "VALUES (?, 'nope', ?, ?) ON CONFLICT(listing_id) DO UPDATE SET "
+                "verdict = 'nope', reason = excluded.reason, updated_at = excluded.updated_at",
+                (listing_id, new_reason, _now()))
+        elif row and row["verdict"] == verdict:  # same Like/Pass again -> un-set (toggle)
+            conn.execute("DELETE FROM feedback WHERE listing_id = ?", (listing_id,))
+        else:
+            conn.execute(
+                "INSERT INTO feedback (listing_id, verdict, reason, updated_at) "
+                "VALUES (?, ?, NULL, ?) ON CONFLICT(listing_id) DO UPDATE SET "
+                "verdict = excluded.verdict, reason = NULL, updated_at = excluded.updated_at",
+                (listing_id, verdict, _now()))
+
+
+def feedback_map() -> dict:
+    """{listing_id: 'like'|'nope'} for all rated listings."""
+    with connect() as conn:
+        return {r["listing_id"]: r["verdict"]
+                for r in conn.execute("SELECT listing_id, verdict FROM feedback")}
+
+
+def feedback_reasons() -> dict:
+    """{listing_id: reason} for passed listings that have a reason set (D29)."""
+    with connect() as conn:
+        return {r["listing_id"]: r["reason"] for r in conn.execute(
+            "SELECT listing_id, reason FROM feedback WHERE reason IS NOT NULL")}
+
+
+def list_feedback(verdict) -> list[dict]:
+    """Listings the user gave `verdict` to, newest first, joined with listing fields."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT l.*, f.verdict AS verdict, f.reason AS pass_reason, "
+            "f.updated_at AS rated_at FROM feedback f "
+            "JOIN listings l ON l.id = f.listing_id "
+            "WHERE f.verdict = ? ORDER BY f.updated_at DESC", (verdict,))]
+
+
+# ------------------------------------------------------------- follow-up tracking (D29)
+def _track_upsert(conn, listing_id, **fields) -> None:
+    """Upsert a tracking row, updating only the given column(s)."""
+    cols = ", ".join(f"{k} = excluded.{k}" for k in fields)
+    keys = ", ".join(fields)
+    qs = ", ".join("?" for _ in fields)
+    conn.execute(
+        f"INSERT INTO tracking (listing_id, {keys}, updated_at) VALUES (?, {qs}, ?) "
+        f"ON CONFLICT(listing_id) DO UPDATE SET {cols}, updated_at = excluded.updated_at",
+        (listing_id, *fields.values(), _now()))
+
+
+def set_contacted(listing_id, contacted: bool | None = None) -> None:
+    """Mark a listing contacted (stamps the time) or not. contacted=None toggles."""
+    with connect() as conn:
+        row = conn.execute("SELECT contacted_at FROM tracking WHERE listing_id = ?",
+                           (listing_id,)).fetchone()
+        if contacted is None:  # toggle
+            contacted = not (row and row["contacted_at"])
+        _track_upsert(conn, listing_id, contacted_at=_now() if contacted else None)
+
+
+def set_note(listing_id, notes) -> None:
+    """Save free-text follow-up notes for a listing (empty string clears)."""
+    with connect() as conn:
+        _track_upsert(conn, listing_id, notes=(notes or "").strip() or None)
+
+
+def tracking_map() -> dict:
+    """{listing_id: {'contacted_at': str|None, 'notes': str|None}} for tracked listings."""
+    with connect() as conn:
+        return {r["listing_id"]: {"contacted_at": r["contacted_at"], "notes": r["notes"]}
+                for r in conn.execute(
+                    "SELECT listing_id, contacted_at, notes FROM tracking")}
+
+
+def list_contacted() -> list[dict]:
+    """Listings marked contacted, most recent first, joined with listing fields."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT l.*, t.contacted_at AS contacted_at, t.notes AS notes "
+            "FROM tracking t JOIN listings l ON l.id = t.listing_id "
+            "WHERE t.contacted_at IS NOT NULL ORDER BY t.contacted_at DESC")]
 
 
 # ------------------------------------------------------------------ observability (D15)

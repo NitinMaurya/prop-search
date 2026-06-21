@@ -20,24 +20,68 @@ name = "MagicBricks"  # must match portals.name
 
 import json
 import logging
-import os
 import re
 
 from property_types import search_url as _category_search_url
 
 # Reuse the tuned normalization helpers + the optional-lib guards (D14).
 from scrapers.nineacres import (
-    _HAVE_PARSEL, _HAVE_PLAYWRIGHT, Selector, sync_playwright,
+    _HAVE_PARSEL, _HAVE_PLAYWRIGHT, Selector,
     normalize_price, normalize_size, _extract_sector,
-    HEADLESS, PROFILE_DIR as _ACRES_PROFILE, USER_AGENT, VIEWPORT,
+    PROFILE_DIR as _ACRES_PROFILE,
     WAIT_TIMEOUT_MS, WARMUP_PAUSE_MS, _looks_blocked,
+    pw_session, launch_stealth_context,
 )
 
 log = logging.getLogger(__name__)
 
 HOMEPAGE = "https://www.magicbricks.com/"
 PROFILE_DIR = _ACRES_PROFILE.replace("99acres", "magicbricks")
-MAX_PAGES = 5  # result pages to walk per refresh (D25); ~30 listings each
+# Budget is filtered SERVER-SIDE via the URL (D27): MagicBricks honours BudgetMin/BudgetMax
+# (in rupees) on the SRP, so every returned listing is already in-budget. That shrinks the
+# result set enough to walk it to exhaustion — we paginate until a page has no listings,
+# with MAX_PAGES only as a safety backstop (sort params like sortBy=priceasc are ignored).
+MAX_PAGES = 20  # safety cap; the real stop is "EMPTY_STREAK consecutive empty pages"
+EMPTY_STREAK = 2     # stop after this many consecutive empty pages (genuine end of results)
+PAGE_ATTEMPTS = 3    # retries per page before giving up on it (throttle stubs are transient)
+PAGE_SETTLE_MS = 2200    # let embedded listings render after navigation
+PAGE_BACKOFF_MS = 3500   # base backoff between retries (multiplied by attempt #)
+MIN_REAL_PAGE_BYTES = 50000  # smaller than this = throttle stub / challenge, not real SRP
+
+
+def _with_budget(url: str, requirement: dict) -> str:
+    """Append MagicBricks BudgetMin/BudgetMax (rupees) from the requirement (D27).
+    Server-side budget filter, so pagination only walks in-budget inventory.
+
+    BudgetMax MUST be paired with BudgetMin or MagicBricks returns an 8 KB empty stub /
+    redirect loop (verified live) — so we always emit BudgetMin (default 0) alongside it.
+    """
+    bmax = requirement.get("budget_max")
+    if not bmax:
+        return url  # no ceiling -> unfiltered city-wide search (matcher still filters)
+    bmin = int(requirement.get("budget_min") or 0)
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}BudgetMin={bmin}&BudgetMax={int(bmax)}"
+
+
+def _with_locality(url: str, sector: str) -> str:
+    """Scope an SRP to a single Noida sector via MagicBricks' `Locality=Sector-N`
+    filter (D28, confirmed live). A city-wide budget search caps at ~90 listings, but
+    one search per sector surfaces that sector's full inventory (~30-36/sector)."""
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}Locality=Sector-{sector}"
+
+
+def _page_url(url: str, n: int) -> str:
+    """URL for result page n (D27). Page 1 is the bare URL. For pages 2+ the `page=N`
+    param MUST precede the budget params — appended at the END, MagicBricks returns an
+    empty 8 KB stub; placed right after `?` it paginates correctly (verified live)."""
+    if n <= 1:
+        return url
+    if "?" in url:
+        path, query = url.split("?", 1)
+        return f"{path}?page={n}&{query}"
+    return f"{url}?page={n}"
 
 SELECTORS = {
     "result_ready": "div.mb-srp__card",
@@ -52,6 +96,9 @@ SELECTORS = {
 AREA_LABEL_PRIORITY = ("Super Area", "Built Up Area", "Carpet Area", "Plot Area")
 # Per-card detail URLs are embedded in the page (no <a> on cards). Card order matches.
 _DETAIL_URL_RE = re.compile(r"https://www\.magicbricks\.com/propertyDetails/[^\"\\ ]{5,160}")
+# Per-listing id in the embedded JSON — used in the fetch loop to detect when MagicBricks
+# starts repeating the last page (out-of-range pages echo it), i.e. the real end (D27).
+_ENCID_RE = re.compile(r'"encId":"([^"]{4,40})')
 
 # The SRP HTML embeds the full listing JSON (D23): each listing object carries images
 # (allImgPath), approving authority (appovedAuthC), ownership (OwnershipTypeD), covered
@@ -72,30 +119,23 @@ class Fetcher:
         if not _HAVE_PLAYWRIGHT:
             log.warning("playwright not installed; MagicBricks fetch skipped")
             return []
-        # SRP page for the requirement's category (D19).
-        srp_url = (_category_search_url("magicbricks", requirement.get("property_type"))
+        # SRP page for the requirement's category (D19) + server-side budget filter (D27).
+        cat_url = (_category_search_url("magicbricks", requirement.get("property_type"))
                    or portal_cfg.get("search_url_template") or HOMEPAGE)
-        log.info("MagicBricks fetch: category=%r", requirement.get("property_type"))
-        try:
-            from playwright_stealth import Stealth  # type: ignore
-            pw_ctx = Stealth().use_sync(sync_playwright())
-        except Exception:  # noqa: BLE001
-            pw_ctx = sync_playwright()  # type: ignore[misc]
+        # One budget-filtered search PER SECTOR (D28) — far more inventory than the
+        # ~90-listing cap of a single city-wide search. No sectors -> one city-wide search.
+        sectors = [str(s).strip() for s in (requirement.get("sectors") or []) if str(s).strip()]
+        searches = ([(s, _with_budget(_with_locality(cat_url, s), requirement)) for s in sectors]
+                    if sectors else [(None, _with_budget(cat_url, requirement))])
+        log.info("MagicBricks fetch: category=%r budget=%s-%s sectors=%s",
+                 requirement.get("property_type"),
+                 requirement.get("budget_min"), requirement.get("budget_max"),
+                 sectors or "all")
 
         rows: list[dict] = []
         try:
-            with pw_ctx as p:  # type: ignore[misc]
-                os.makedirs(PROFILE_DIR, exist_ok=True)
-                context = p.chromium.launch_persistent_context(
-                    PROFILE_DIR, headless=HEADLESS, user_agent=USER_AGENT,
-                    viewport=VIEWPORT, locale="en-IN",
-                    args=["--disable-blink-features=AutomationControlled"],
-                    extra_http_headers={
-                        "Accept-Language": "en-IN,en;q=0.9",
-                        "Accept": ("text/html,application/xhtml+xml,application/xml;"
-                                   "q=0.9,image/webp,*/*;q=0.8"),
-                    },
-                )
+            with pw_session() as p:  # type: ignore[misc]
+                context = launch_stealth_context(p, PROFILE_DIR)
                 try:
                     page = context.new_page()
                     try:  # warm up + carry the logged-in session/Akamai cookies
@@ -105,32 +145,11 @@ class Fetcher:
                     except Exception as e:  # noqa: BLE001
                         log.debug("MagicBricks warmup failed (continuing): %s", e)
 
-                    # Walk result pages (D25): one raw row per page; the parser pulls the
-                    # embedded listings from each. Stop on a blocked/empty/last page.
-                    for pg_num in range(1, MAX_PAGES + 1):
-                        page_url = srp_url + ("&" if "?" in srp_url else "?") + \
-                            f"page={pg_num}"
-                        try:
-                            page.goto(page_url, wait_until="domcontentloaded",
-                                      timeout=WAIT_TIMEOUT_MS)
-                            page.wait_for_timeout(1800)  # let listings settle
-                            html = page.content()
-                        except Exception as e:  # noqa: BLE001
-                            log.warning("MagicBricks page %d failed: %s", pg_num, e)
-                            break
-                        # Real SRP pages are >500KB; a few-KB page is an Akamai
-                        # challenge/interstitial, not a genuine empty results page.
-                        if _looks_blocked(html) or len(html) < 50000:
-                            log.warning("MagicBricks page %d blocked/challenge (%d bytes)",
-                                        pg_num, len(html or ""))
-                            break
-                        has_listings = '"encId":"' in html
-                        if has_listings or pg_num == 1:
-                            rows.append({"url": page_url, "raw_html": html})
-                            log.info("MagicBricks page %d fetched (%d bytes, listings=%s)",
-                                     pg_num, len(html), has_listings)
-                        if not has_listings:  # past the last page
-                            break
+                    # Walk each search to exhaustion. seen_ids is shared across sectors so
+                    # a listing surfacing in two sector searches is only stored once.
+                    seen_ids: set[str] = set()
+                    for sector, srp_url in searches:
+                        self._walk_pages(page, srp_url, sector, seen_ids, rows)
                 finally:
                     context.close()
         except Exception as e:  # noqa: BLE001 - never raise (D13)
@@ -140,6 +159,58 @@ class Fetcher:
         if not rows:
             log.warning("MagicBricks returned no usable pages")
         return rows
+
+    def _walk_pages(self, page, srp_url: str, sector, seen_ids: set, rows: list) -> None:
+        """Paginate one budget-filtered search to exhaustion, appending a raw row per
+        page with new listings (D27/D28). MagicBricks intermittently serves an 8 KB
+        throttle stub for a valid page, so _get_page retries with backoff; we stop after
+        EMPTY_STREAK consecutive empties (genuine end) or when a page adds no new listings
+        (out-of-range pages echo the last one). Found IDs accumulate in the shared seen_ids
+        so the same listing is never stored twice across sectors."""
+        tag = f"sector {sector}" if sector else "city-wide"
+        empty_streak = 0
+        for pg_num in range(1, MAX_PAGES + 1):
+            html = self._get_page(page, _page_url(srp_url, pg_num), pg_num)
+            if not (html and '"encId":"' in html):
+                empty_streak += 1
+                log.info("MagicBricks %s page %d empty (streak %d/%d)",
+                         tag, pg_num, empty_streak, EMPTY_STREAK)
+                if empty_streak >= EMPTY_STREAK:
+                    break
+                continue
+            empty_streak = 0
+            new_ids = set(_ENCID_RE.findall(html)) - seen_ids
+            if not new_ids:  # out-of-range page echoing the last one -> end of this search
+                log.info("MagicBricks %s page %d has no new listings; stopping", tag, pg_num)
+                break
+            seen_ids |= new_ids
+            rows.append({"url": _page_url(srp_url, pg_num), "raw_html": html})
+            log.info("MagicBricks %s page %d fetched (%d bytes, %d new)",
+                     tag, pg_num, len(html), len(new_ids))
+
+    def _get_page(self, page, url: str, pg_num: int) -> str | None:
+        """Navigate to one result page, retrying past transient throttle stubs / redirect
+        loops with backoff (D27). Returns the HTML of a real SRP, or None if every attempt
+        came back as a stub / block / nav error (treated as an empty page by the caller)."""
+        for attempt in range(1, PAGE_ATTEMPTS + 1):
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=WAIT_TIMEOUT_MS)
+                page.wait_for_timeout(PAGE_SETTLE_MS)
+                html = page.content()
+            except Exception as e:  # noqa: BLE001 - redirect loop / timeout is retryable
+                log.warning("MagicBricks page %d attempt %d nav error: %s",
+                            pg_num, attempt, str(e).splitlines()[0])
+                page.wait_for_timeout(PAGE_BACKOFF_MS * attempt)
+                continue
+            # A real SRP is hundreds of KB; a few-KB page is a throttle stub / challenge.
+            if _looks_blocked(html) or len(html) < MIN_REAL_PAGE_BYTES:
+                log.warning("MagicBricks page %d attempt %d throttle stub (%d bytes); "
+                            "backing off", pg_num, attempt, len(html or ""))
+                page.wait_for_timeout(PAGE_BACKOFF_MS * attempt)
+                continue
+            return html
+        return None
+
 
 class Parser:
     """parsel parser for MagicBricks (D13). One SRP page -> many listings. Never raises."""
@@ -262,6 +333,8 @@ class Parser:
             "advertiser": advertiser,
             "ownership": _emb(ch, "OwnershipTypeD"),
             "approving_authority": _emb(ch, "appovedAuthC"),
+            "description": _clean_desc(_emb(ch, "plgdtldesc") or _emb(ch, "dtldesc")
+                                       or _emb(ch, "ampDesc")),
         }
 
     # ---------------------------------------------------------------- JSON parsing (D20)
@@ -314,7 +387,19 @@ class Parser:
             "advertiser": advertiser,
             "ownership": (item.get("OwnershipTypeD") or "").strip() or None,
             "approving_authority": (item.get("appovedAuthC") or "").strip() or None,
+            "description": _clean_desc(item.get("plgdtldesc") or item.get("dtldesc")
+                                       or item.get("ampDesc")),
         }
+
+
+def _clean_desc(s):
+    """Tidy an owner-written description (D30): strip HTML tags (<br> etc.), collapse
+    whitespace, cap length. Returns None if empty."""
+    if not s:
+        return None
+    s = re.sub(r"<[^>]+>", " ", str(s))      # drop any HTML tags
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:800] or None
 
 
 def _emb_unescape(v: str):

@@ -6,3 +6,4 @@ data/*.db
 data/.pw-*-profile/
 logs/*.log
 .DS_Store
+graphify-out/

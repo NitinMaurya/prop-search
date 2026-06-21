@@ -13,14 +13,14 @@ name = "Housing.com"   # must match portals.name
 """
 
 import logging
-import os
 import re
 
 from scrapers.nineacres import (
-    _HAVE_PARSEL, _HAVE_PLAYWRIGHT, Selector, sync_playwright,
+    _HAVE_PARSEL, _HAVE_PLAYWRIGHT, Selector,
     normalize_price, normalize_size, _extract_sector,
-    HEADLESS, PROFILE_DIR as _ACRES_PROFILE, USER_AGENT, VIEWPORT,
+    PROFILE_DIR as _ACRES_PROFILE,
     WAIT_TIMEOUT_MS, WARMUP_PAUSE_MS, _looks_blocked,
+    pw_session, launch_stealth_context,
 )
 
 log = logging.getLogger(__name__)
@@ -55,19 +55,8 @@ class Fetcher:
             return []
         url = portal_cfg.get("search_url_template") or HOMEPAGE
         try:
-            from playwright_stealth import Stealth  # type: ignore
-            pw_ctx = Stealth().use_sync(sync_playwright())
-        except Exception:  # noqa: BLE001
-            pw_ctx = sync_playwright()  # type: ignore[misc]
-        try:
-            with pw_ctx as p:  # type: ignore[misc]
-                os.makedirs(PROFILE_DIR, exist_ok=True)
-                context = p.chromium.launch_persistent_context(
-                    PROFILE_DIR, headless=HEADLESS, user_agent=USER_AGENT,
-                    viewport=VIEWPORT, locale="en-IN",
-                    args=["--disable-blink-features=AutomationControlled"],
-                    extra_http_headers={"Accept-Language": "en-IN,en;q=0.9"},
-                )
+            with pw_session() as p:  # type: ignore[misc]
+                context = launch_stealth_context(p, PROFILE_DIR)
                 try:
                     page = context.new_page()
                     try:

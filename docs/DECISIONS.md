@@ -246,6 +246,90 @@ contact). Per-listing regex is robust to page-structure changes since it doesn't
 on a wrapping array key. 99acres + Housing.com portals were disabled (always blocked from
 here) so refresh is MagicBricks-only and fast.
 
+## D26 — Patchright + headful real-Chrome on a residential IP (anti-bot)
+**Decision:** Drive scraping with **Patchright** (a drop-in, fingerprint-patched fork of
+Playwright) instead of vanilla Playwright + playwright-stealth, **headful by default**
+(`PROP_HEADLESS=0`), using the **real Chrome channel** (`PROP_BROWSER_CHANNEL=chrome`),
+on the user's **residential machine**. The import in `scrapers/nineacres.py` prefers
+`patchright.sync_api` and falls back to Playwright; both shared launch helpers
+(`pw_session`, `launch_stealth_context`) live there, so MagicBricks + Housing.com reuse
+them. With Patchright we do **not** stack playwright-stealth and do **not** set a custom
+user-agent or `--disable-blink-features=AutomationControlled` — those re-introduce the
+very fingerprints Patchright strips. Falls back to bundled Chromium if Chrome is absent.
+**Why:** The 403/Akamai-challenge walls were an automation-fingerprint + datacenter-IP
+problem, not a data problem. On the user's home IP with a visible real Chrome, MagicBricks
+served full ~1.2 MB SRPs (vs. 8 KB challenge stubs in the cloud sandbox) — 5 pages, 140
+listings, 0 blocks, all with advertiser/owner detail after a one-time manual login.
+**Implication:** `requirements.txt` adds `patchright`. The 6h scheduler must run on the
+user's Mac, not a datacenter/cloud host. **Stale-profile gotcha:** a corrupt persistent
+profile causes `net::ERR_TOO_MANY_REDIRECTS` on the SRP — fix = delete
+`data/.pw-<portal>-profile` and re-run (re-login if it was an authed profile). One-time
+login via `mb_login.py` (or the scratchpad login helper) seeds the authed session into the
+persistent profile; future runs reuse it until MagicBricks expires it.
+**Note on 99acres + Housing.com:** still unusable — the user's IP is **blocked at the IP
+level** (can't even open the sites in a normal browser), which Patchright cannot fix.
+They stay disabled; MagicBricks is the only live portal.
+
+## D27 — Server-side budget filter + deep pagination (MagicBricks)
+**Decision:** Push the requirement's budget to MagicBricks via the SRP URL
+(`BudgetMin=<rupees>&BudgetMax=<rupees>`) and paginate the in-budget set to exhaustion,
+instead of fetching a generic city-wide page and dropping out-of-budget listings later.
+The matcher still applies the final sector/size filter. Concretely (`scrapers/magicbricks.py`):
+- `_with_budget()` appends the pair — **BudgetMax MUST be paired with BudgetMin** (default
+  0) or MagicBricks returns an 8 KB empty stub.
+- `_page_url()` puts `page=N` **before** the budget params (`?page=N&...&BudgetMax=...`);
+  appended at the end it returns a stub. Page 1 is the bare URL (`page=1` + budget loops).
+- `_get_page()` retries each page `PAGE_ATTEMPTS=3` times with linear backoff — transient
+  throttle stubs and `ERR_TOO_MANY_REDIRECTS` are recovered this way (seen live on page 1).
+- The loop stops when a page adds no new `encId`s (out-of-range pages echo the last page)
+  or after `EMPTY_STREAK=2` consecutive empty pages; `MAX_PAGES=20` is a backstop.
+**Why:** `sortBy=priceasc` is ignored by MagicBricks, so "sort by price, stop when over
+budget" is impossible — but the server-side budget filter achieves the same result and
+bounds the set so deep pagination actually reaches every in-budget listing. Per-sector
+search was rejected: the readable per-sector slug redirect-loops (needs internal locality
+IDs), and a budget-filtered city-wide crawl already covers all sectors at once. Verified
+live: ₹0–4.5 Cr → 122 unique in-budget listings; the active ₹3–4.5 Cr requirement → 88
+parsed / 68 matches, persisted to the DB.
+**Implication:** Refresh/scheduler must run on the user's Mac (D26). One known gap: a
+specific `page=N`+budget offset can deterministically return an 8 KB stub (`page=3` on the
+₹0–4.5 Cr bucket), dropping ~30 mid-list listings for that run — accepted, since the next
+6h run with shifted inventory usually surfaces them and the budget bucket changes the
+offset. NOT fixed by retry (it's deterministic, not transient).
+
+## D28 — Per-sector search beats the city-wide budget crawl (2026-06-20)
+**Decision:** Scrape MagicBricks with **one budget-filtered search per requirement
+sector**, via the `&Locality=Sector-N` query param (e.g.
+`...?proptype=Residential-House,Villa&cityName=Noida&Locality=Sector-36&BudgetMin=…&BudgetMax=…`).
+No sectors on the requirement → fall back to one city-wide search.
+**Why:** D27's city-wide budget crawl caps at ~90 listings (MagicBricks echoes pages past
+~3). D27 had rejected per-sector because the *readable slug* form
+(`independent-house-for-sale-in-sector-N-noida-pppfs`) redirect-loops — but the
+**`Locality=Sector-N` query param** works fine and needs no internal locality IDs
+(user-confirmed live URL). Each sector returns its full inventory on page 1 (~5–37
+listings) then stubs out on page 2, so the existing pagination/dedup loop handles it
+unchanged. `seen_ids` is shared across sectors so a listing in two searches is stored once.
+**Verified live (2026-06-20):** the 11-sector ₹3–5 Cr house requirement →
+**382 parsed / 0 errors / 58 new matches** in one run (vs ~90 city-wide). Code:
+`_with_locality()` + `_walk_pages()` loop in `scrapers/magicbricks.py`. Supersedes the
+"per-sector rejected" note in D27. Runtime ~2 min for 11 sectors (acceptable for a 6h loop).
+
+## D29 — Pass reasons + contacted/notes follow-up tracking (2026-06-20)
+**Decision:** Capture *why* a listing is passed and track follow-ups.
+- **Pass reasons:** clicking 👎 Pass reveals reason chips (over_budget / fake / location /
+  condition / disliked) under the listing; stored in `feedback.reason` (new nullable col,
+  migrated in `init()`). Re-clicking the active reason clears just the reason (stays
+  passed). Chips show in card / table / lightbox.
+- **Contacted + notes:** new `tracking` table (`listing_id` PK, `contacted_at`, `notes`),
+  independent of like/pass so a listing can be tracked without being rated. A "📞 Mark
+  contacted" toggle (query-param link, like Like/Pass) appears on cards/table/lightbox and
+  stamps the time. Free-text **notes** are edited natively on a new Shortlist **Follow-ups**
+  tab (st.text_area per liked/contacted listing) — the bulk HTML cards can't host Streamlit
+  text inputs, so notes live there. A 📝 indicator shows on listings that have notes.
+**Why:** turns triage into a usable pipeline — learn what to filter out, and remember who
+you've already called. **Implication:** all three interactions ride the existing
+query-param→`st.rerun()` pattern (D-UI); DB layer in `db.py` (`set_feedback(reason=)`,
+`set_contacted`, `set_note`, `tracking_map`, `list_contacted`).
+
 ---
 
 ## Open questions (resolve before/while building)

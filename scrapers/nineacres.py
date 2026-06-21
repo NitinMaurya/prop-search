@@ -22,12 +22,21 @@ log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------- optional library guards
 # Guarded so `import scrapers.nineacres` never crashes when libs are absent (D14).
+# Prefer Patchright (D26): a drop-in Playwright replacement that patches the automation
+# fingerprints Akamai/Cloudflare detect. Its sync API is 1:1 with Playwright's, so the
+# rest of the code is unchanged. Fall back to vanilla Playwright if Patchright is absent.
 try:
-    from playwright.sync_api import sync_playwright  # type: ignore
+    from patchright.sync_api import sync_playwright  # type: ignore
     _HAVE_PLAYWRIGHT = True
+    _USING_PATCHRIGHT = True
 except ImportError:  # pragma: no cover - depends on environment
-    sync_playwright = None  # type: ignore
-    _HAVE_PLAYWRIGHT = False
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore
+        _HAVE_PLAYWRIGHT = True
+    except ImportError:
+        sync_playwright = None  # type: ignore
+        _HAVE_PLAYWRIGHT = False
+    _USING_PATCHRIGHT = False
 
 try:
     # playwright-stealth API has shifted across versions; accept either entrypoint.
@@ -228,7 +237,12 @@ HOMEPAGE = "https://www.99acres.com/"
 # context every run looks like a brand-new bot each time and gets blocked harder.
 PROFILE_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)),
                             "data", ".pw-99acres-profile")
-HEADLESS = _os.environ.get("PROP_HEADLESS", "1") != "0"  # PROP_HEADLESS=0 -> headful
+# Default HEADFUL (D26): a visible real browser on a residential IP is what actually
+# beats Akamai. Set PROP_HEADLESS=1 to run hidden (weaker; for debugging/servers only).
+HEADLESS = _os.environ.get("PROP_HEADLESS", "0") == "1"
+# Patchright works best driving real Chrome rather than bundled Chromium. Override via
+# PROP_BROWSER_CHANNEL (e.g. "chrome-beta", "msedge"); empty -> bundled Chromium.
+BROWSER_CHANNEL = _os.environ.get("PROP_BROWSER_CHANNEL", "chrome")
 WARMUP_PAUSE_MS = 2500
 BLOCK_MARKERS = ("Access Denied", "You don't have permission", "Request unsuccessful",
                  "captcha", "Pardon Our Interruption", "Request Blocked", "Security Alert",
@@ -240,6 +254,59 @@ def _looks_blocked(html: str) -> bool:
     if not html or len(html) < 1500:  # real SRP pages are tens-to-hundreds of KB
         return True
     return any(marker.lower() in html.lower() for marker in BLOCK_MARKERS)
+
+
+# ------------------------------------------------- shared browser launch helpers (D26)
+# All three portal fetchers drive the browser identically; the only per-portal differences
+# are the URLs and selectors. Centralize the launch so Patchright's stealth rules live in
+# one place and a fingerprint tweak applies to every portal at once.
+def pw_session():
+    """Return a Playwright/Patchright context manager for `with ... as p`.
+
+    With vanilla Playwright we wrap the session in playwright-stealth. With Patchright we
+    DON'T — Patchright is itself the stealth layer, and stacking playwright-stealth on top
+    re-introduces detectable patches. Caller is responsible for `_HAVE_PLAYWRIGHT`.
+    """
+    if not _USING_PATCHRIGHT:
+        try:
+            from playwright_stealth import Stealth  # type: ignore
+            return Stealth().use_sync(sync_playwright())
+        except Exception:  # noqa: BLE001
+            pass
+    return sync_playwright()  # type: ignore[misc]
+
+
+def launch_stealth_context(p, profile_dir: str):
+    """Launch a persistent browser context tuned for anti-bot evasion (D26).
+
+    Patchright path: drive real Chrome (channel) with NO custom user-agent / automation
+    args — overriding those re-adds the very fingerprints Patchright strips. Falls back to
+    bundled Chromium if the Chrome channel isn't installed. Vanilla-Playwright path keeps
+    the old realistic-UA + AutomationControlled args (best it can do without Patchright).
+    """
+    _os.makedirs(profile_dir, exist_ok=True)
+    base = dict(headless=HEADLESS, viewport=VIEWPORT, locale="en-IN")
+    if _USING_PATCHRIGHT:
+        opts = dict(base, channel=BROWSER_CHANNEL) if BROWSER_CHANNEL else dict(base)
+    else:
+        opts = dict(
+            base,
+            user_agent=USER_AGENT,
+            args=["--disable-blink-features=AutomationControlled"],
+            extra_http_headers={
+                "Accept-Language": "en-IN,en;q=0.9",
+                "Accept": ("text/html,application/xhtml+xml,application/xml;"
+                           "q=0.9,image/webp,*/*;q=0.8"),
+            },
+        )
+    try:
+        return p.chromium.launch_persistent_context(profile_dir, **opts)
+    except Exception as e:  # noqa: BLE001 - Chrome channel may be absent
+        if opts.pop("channel", None):
+            log.warning("Chrome channel unavailable (%s); falling back to bundled "
+                        "Chromium. Install Chrome or set PROP_BROWSER_CHANNEL.", e)
+            return p.chromium.launch_persistent_context(profile_dir, **opts)
+        raise
 
 
 # ========================================================================== Fetcher
@@ -261,29 +328,9 @@ class Fetcher:
             return []
 
         url = _build_search_url(requirement, portal_cfg)
-        # Prefer the stealth v2 context manager; fall back to plain playwright.
         try:
-            from playwright_stealth import Stealth  # type: ignore
-            pw_ctx = Stealth().use_sync(sync_playwright())
-        except Exception:  # noqa: BLE001
-            pw_ctx = sync_playwright()  # type: ignore[misc]
-
-        try:
-            with pw_ctx as p:  # type: ignore[misc]
-                _os.makedirs(PROFILE_DIR, exist_ok=True)
-                context = p.chromium.launch_persistent_context(
-                    PROFILE_DIR,
-                    headless=HEADLESS,
-                    user_agent=USER_AGENT,
-                    viewport=VIEWPORT,
-                    locale="en-IN",
-                    args=["--disable-blink-features=AutomationControlled"],
-                    extra_http_headers={
-                        "Accept-Language": "en-IN,en;q=0.9",
-                        "Accept": ("text/html,application/xhtml+xml,application/xml;"
-                                   "q=0.9,image/webp,*/*;q=0.8"),
-                    },
-                )
+            with pw_session() as p:  # type: ignore[misc]
+                context = launch_stealth_context(p, PROFILE_DIR)
                 try:
                     page = context.new_page()
                     # Warm up on the homepage so Akamai issues/matures its cookies first.

@@ -34,12 +34,35 @@ selector tuning + the other 3 portals — see "Remaining" below.
 - [x] **7. System/Status page** — `app.py` page 3 (D15): per-portal, pipeline health, errors, run history.
   - Verified: imports; reads status_summary()/recent_runs(). *(Browser run pending — needs `pip install`.)*
 
+## Anti-bot blocking — SOLVED (2026-06-19, D26)
+Switched to **Patchright + headful real Chrome** on the user's residential IP. MagicBricks
+now serves full SRPs end-to-end: 5 pages → 140 listings, 0 blocks, advertiser/owner detail
+after a one-time manual login (session saved into the persistent profile). The 6h scheduler
+must run on the user's Mac (not a cloud/datacenter host).
+- Gotcha: a stale persistent profile causes `ERR_TOO_MANY_REDIRECTS` → delete
+  `data/.pw-<portal>-profile` and re-login. (D26)
+- **99acres + Housing.com remain dead:** the user's IP is blocked at the IP level (sites
+  won't open even in a normal browser) — Patchright can't fix that. Stay disabled.
+
+## Per-sector search — DONE (2026-06-20, D28)
+A single city-wide budget search caps at ~90 listings (MagicBricks echoes deep pages), so
+the fetcher now runs **one budget-filtered search per requirement sector** via
+`&Locality=Sector-N`. Verified live: the 11-sector ₹3–5 Cr house requirement → **382
+parsed / 0 errors / 58 new matches** in ~2 min (vs ~90 before). Falls back to one
+city-wide search when the requirement has no sectors. See D28.
+
+## Budget-filtered deep pagination — DONE (2026-06-19, D27)
+MagicBricks now filters by budget server-side (`BudgetMin`+`BudgetMax` in the URL) and
+paginates the in-budget set to exhaustion (retry/backoff past throttle stubs; stop when a
+page adds no new listings). Verified: ₹3–4.5 Cr requirement → 88 parsed / 68 matches,
+listings persisted (80 → 152 in DB). Known minor gap: one `page=N`+budget offset can
+return an 8 KB stub and drop ~30 mid-list listings for that run (D27) — accepted.
+
 ## Remaining to be fully live
-Deps are installed (.venv) and Chromium is downloaded. MagicBricks works end-to-end now.
+Deps are installed (.venv), Patchright active, Chrome detected. MagicBricks works end-to-end.
 On the user's RESIDENTIAL machine:
 1. Run `streamlit run app.py` and `python scheduler.py --once` to drive the app/pipeline.
-2. Tune 99acres + Housing.com live SELECTORS — fetch from the residential IP, inspect
-   `raw_html`, fix the `SELECTORS` blocks (both are skeletons; MagicBricks is the model).
+2. ~~Tune 99acres + Housing.com~~ — blocked at IP level, not pursuing (D26).
 3. Add a real Telegram token/chat id to `.env` to receive push alerts.
 4. (Optional) NoBroker plugin — disabled by default (login walls / heaviest protection).
 5. Confirm Q1 sectors (currently "all Noida"). Q2 tolerance ±30% + Q3 stale=3 are set and
