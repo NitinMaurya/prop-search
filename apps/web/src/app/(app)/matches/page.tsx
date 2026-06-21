@@ -145,7 +145,7 @@ function MatchesInner() {
 }
 
 function Grid({ children }: { children: React.ReactNode }) {
-  return <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%,290px),1fr))" }}>{children}</div>;
+  return <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%,250px),1fr))" }}>{children}</div>;
 }
 
 function Select({ label, value, onChange, options }: {

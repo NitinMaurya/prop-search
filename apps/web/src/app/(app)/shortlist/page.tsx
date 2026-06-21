@@ -60,7 +60,7 @@ function ShortlistInner() {
           {followups.map((m) => <FollowupRow key={m.id} m={m} />)}
         </div>
       ) : (
-        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%,290px),1fr))" }}>
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%,250px),1fr))" }}>
           {rows.length === 0 && <Empty icon={tab === "liked" ? "💚" : "🗂️"} title={`Nothing ${tab} yet`} />}
           {rows.map((m) => (
             <MatchCard key={m.match_id} m={m}

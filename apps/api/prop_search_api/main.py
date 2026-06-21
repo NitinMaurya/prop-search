@@ -48,5 +48,7 @@ def run():
     """Console-script entry: `prop-search-api`."""
     import os
     import uvicorn
+    # access_log=False: our log_latency middleware already logs one line per request
+    # (with latency), so uvicorn's default access log would be a duplicate.
     uvicorn.run("prop_search_api.main:app", host="0.0.0.0",
-                port=int(os.environ.get("PORT", 8000)), reload=False)
+                port=int(os.environ.get("PORT", 8000)), reload=False, access_log=False)

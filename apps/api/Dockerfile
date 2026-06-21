@@ -14,4 +14,5 @@ RUN pip install --no-cache-dir ./apps/api
 # Hosts inject PORT; default 8000 for local runs.
 ENV PORT=8000
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn prop_search_api.main:app --host 0.0.0.0 --port ${PORT}"]
+# --no-access-log: our middleware logs one line per request (with latency) — avoid dupes.
+CMD ["sh", "-c", "uvicorn prop_search_api.main:app --host 0.0.0.0 --port ${PORT} --no-access-log"]
