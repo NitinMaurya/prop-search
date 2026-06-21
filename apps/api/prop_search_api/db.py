@@ -6,7 +6,14 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from . import cache
 from .config import settings
+
+# TTLs (seconds). Matches is invalidated on the user's own writes, so it can be longer;
+# the bound only matters for cross-process changes (a scrape's new matches).
+MATCHES_TTL = 90
+SETTINGS_TTL = 300
+SYSTEM_TTL = 30
 
 _pool: ConnectionPool | None = None
 
@@ -37,7 +44,9 @@ def create_requirement(uid: str, r: dict) -> dict:
             (uid, r.get("owner"), r["property_type"], Jsonb(r["sizes_sqm"]),
              r["size_tolerance_pct"], r.get("budget_min"), r.get("budget_max"),
              Jsonb(r["sectors"]), r.get("active", True)))
-        return cur.fetchone()
+        row = cur.fetchone()
+    invalidate_matches(uid)
+    return row
 
 
 def update_requirement(uid: str, req_id: int, r: dict) -> dict | None:
@@ -49,23 +58,38 @@ def update_requirement(uid: str, req_id: int, r: dict) -> dict | None:
             (r.get("owner"), r["property_type"], Jsonb(r["sizes_sqm"]),
              r["size_tolerance_pct"], r.get("budget_min"), r.get("budget_max"),
              Jsonb(r["sectors"]), r.get("active", True), req_id, uid))
-        return cur.fetchone()
+        row = cur.fetchone()
+    invalidate_matches(uid)
+    return row
 
 
 def delete_requirement(uid: str, req_id: int) -> bool:
     with pool().connection() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM requirements WHERE id = %s AND user_id = %s",
                     (req_id, uid))
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    invalidate_matches(uid)
+    return ok
 
 
 # ----------------------------------------------------------------- matches
+def _matches_key(uid: str) -> str:
+    return f"matches:{uid}"
+
+
+def invalidate_matches(uid: str) -> None:
+    cache.invalidate(_matches_key(uid))
+
+
 def list_matches(uid: str) -> list[dict]:
     """The user's matches, enriched with listing fields + their feedback/tracking.
 
-    Single round-trip: the NOIDA-authority filter (the noida_authority_only setting) and
-    the is_new flag (first seen in the latest run) are folded into SQL via subqueries, so
-    the API doesn't pay extra DB hops (this matters a lot when the DB is far away)."""
+    Cached per user (TTL); invalidated on that user's feedback/tracking/requirement
+    writes. Single round-trip: the NOIDA-authority filter and is_new flag are folded
+    into SQL via subqueries, so a cache miss is still one DB hop."""
+    cached = cache.get(_matches_key(uid))
+    if cached is not None:
+        return cached
     with pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
             "WITH cfg AS (SELECT value FROM settings WHERE key = 'noida_authority_only'), "
@@ -84,7 +108,9 @@ def list_matches(uid: str) -> list[dict]:
             "       AND lower(coalesce(l.ownership,'')) <> 'freehold') "
             "ORDER BY m.score DESC NULLS LAST",
             {"uid": uid})
-        return cur.fetchall()
+        rows = cur.fetchall()
+    cache.put(_matches_key(uid), rows, MATCHES_TTL)
+    return rows
 
 
 # ----------------------------------------------------------------- feedback (D29)
@@ -111,6 +137,7 @@ def set_feedback(uid: str, listing_id: int, verdict: str, reason: str | None) ->
                 "ON CONFLICT (user_id, listing_id) DO UPDATE SET verdict = excluded.verdict, "
                 "reason = NULL, updated_at = now()",
                 (uid, listing_id, verdict))
+    invalidate_matches(uid)
 
 
 # ----------------------------------------------------------------- tracking (D29)
@@ -127,7 +154,8 @@ def set_contacted(uid: str, listing_id: int) -> bool:
             "ON CONFLICT (user_id, listing_id) DO UPDATE SET "
             "contacted_at = excluded.contacted_at, updated_at = now()",
             (uid, listing_id, now_contacted))
-        return now_contacted
+    invalidate_matches(uid)
+    return now_contacted
 
 
 def set_note(uid: str, listing_id: int, notes: str | None) -> None:
@@ -139,13 +167,19 @@ def set_note(uid: str, listing_id: int, notes: str | None) -> None:
             "ON CONFLICT (user_id, listing_id) DO UPDATE SET notes = excluded.notes, "
             "updated_at = now()",
             (uid, listing_id, clean))
+    invalidate_matches(uid)
 
 
 # ----------------------------------------------------------------- settings (global)
 def get_settings() -> dict:
+    cached = cache.get("settings")
+    if cached is not None:
+        return cached
     with pool().connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT key, value FROM settings")
-        return {r["key"]: r["value"] for r in cur.fetchall()}
+        out = {r["key"]: r["value"] for r in cur.fetchall()}
+    cache.put("settings", out, SETTINGS_TTL)
+    return out
 
 
 def update_settings(values: dict) -> dict:
@@ -155,11 +189,15 @@ def update_settings(values: dict) -> dict:
                 "INSERT INTO settings (key, value) VALUES (%s, %s) "
                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
                 (k, str(v)))
+    cache.invalidate("settings")
     return get_settings()
 
 
 # ----------------------------------------------------------------- system (global)
 def system_status() -> dict:
+    cached = cache.get("system")
+    if cached is not None:
+        return cached
     with pool().connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FILTER (WHERE not is_stale) AS active, "
                     "count(*) FILTER (WHERE is_stale) AS stale FROM listings")
@@ -168,4 +206,6 @@ def system_status() -> dict:
         portals = cur.fetchall()
         cur.execute("SELECT * FROM runs ORDER BY started_at DESC LIMIT 20")
         runs = cur.fetchall()
-    return {"totals": totals, "portals": portals, "runs": runs}
+    result = {"totals": totals, "portals": portals, "runs": runs}
+    cache.put("system", result, SYSTEM_TTL)
+    return result
