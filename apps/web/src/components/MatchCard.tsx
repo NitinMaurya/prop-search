@@ -15,7 +15,7 @@ const PASS_REASONS: [string, string][] = [
 
 type Ctx = { prev: [readonly unknown[], Match[] | undefined][] };
 
-export function MatchCard({ m }: { m: Match }) {
+export function MatchCard({ m, onZoom }: { m: Match; onZoom?: () => void }) {
   const qc = useQueryClient();
 
   // Optimistic cache patching: update the listing across all cached match lists so the
@@ -51,12 +51,18 @@ export function MatchCard({ m }: { m: Match }) {
   const isContacted = !!m.contacted_at;
 
   return (
-    <div className={`ps-card overflow-hidden flex flex-col h-full ${m.verdict === "nope" ? "opacity-60 hover:opacity-100" : ""}`}>
-      {/* photo — fixed aspect, never shrinks */}
-      <div className="relative shrink-0 aspect-[16/10] bg-[var(--color-brand-soft)]">
+    <div className={`ps-card relative overflow-hidden flex flex-col h-full ${m.verdict === "nope" ? "opacity-60 hover:opacity-100" : ""}`}>
+      {/* whole card opens the listing (stretched link); photo + actions sit above it */}
+      {m.url && (
+        <a href={m.url} target="_blank" rel="noopener" aria-label="Open listing"
+          className="absolute inset-0 z-[1]" />
+      )}
+      {/* photo — fixed aspect, never shrinks; click to zoom (gallery) */}
+      <div className="relative z-[2] shrink-0 aspect-[16/10] bg-[var(--color-brand-soft)]">
         {m.image_url
           ? // eslint-disable-next-line @next/next/no-img-element
-            <img src={m.image_url} alt="" className="w-full h-full object-cover block" />
+            <img src={m.image_url} alt="" onClick={onZoom}
+              className={`w-full h-full object-cover block ${onZoom ? "cursor-zoom-in" : ""}`} />
           : <div className="w-full h-full flex items-center justify-center text-4xl opacity-50">🏠</div>}
         {m.is_new && (
           <span className="absolute top-2.5 left-2.5 text-xs font-extrabold text-white px-2.5 py-1 rounded-full"
@@ -76,13 +82,14 @@ export function MatchCard({ m }: { m: Match }) {
         )}
       </div>
 
-      {/* body — fixed-height sections so every card is identical regardless of content */}
+      {/* body — fixed-height sections so every card is identical regardless of content.
+          Text sits under the stretched link (so clicking it opens the listing); only the
+          action buttons are raised above it. */}
       <div className="p-4 flex flex-col flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <a href={m.url ?? "#"} target="_blank" rel="noopener"
-            className="text-2xl font-black tracking-tight no-underline text-[var(--color-ink)] hover:text-[var(--color-brand)]">
+          <span className="text-2xl font-black tracking-tight text-[var(--color-ink)]">
             {rupeesToCr(m.price) || "On request"}
-          </a>
+          </span>
           {m.size_sqm && (
             <span className="text-xs font-bold rounded-full px-3 py-1 bg-[var(--color-brand-soft)] text-[var(--color-brand)] shrink-0">
               {Math.round(m.size_sqm)} sqm
@@ -108,7 +115,7 @@ export function MatchCard({ m }: { m: Match }) {
           )}
         </div>
 
-        <div className="flex gap-2 mt-3">
+        <div className="relative z-[2] flex gap-2 mt-3">
           <button onClick={() => feedback.mutate({ v: "nope" })}
             className={`flex-1 py-2 rounded-xl font-bold text-sm border ${
               m.verdict === "nope" ? "bg-red-500 text-white border-red-500" : "text-red-600 border-red-200 hover:bg-red-50"
@@ -121,7 +128,7 @@ export function MatchCard({ m }: { m: Match }) {
 
         {/* pass reasons appear only when passed */}
         {m.verdict === "nope" && (
-          <div className="flex flex-wrap gap-1.5 mt-2.5">
+          <div className="relative z-[2] flex flex-wrap gap-1.5 mt-2.5">
             <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-muted)] self-center">Why?</span>
             {PASS_REASONS.map(([code, label]) => (
               <button key={code} onClick={() => feedback.mutate({ v: "nope", reason: code })}

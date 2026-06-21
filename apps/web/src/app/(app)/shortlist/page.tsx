@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { rupeesToCr } from "@/lib/format";
 import { useUrlState } from "@/lib/useUrlState";
 import { MatchCard } from "@/components/MatchCard";
+import { Lightbox } from "@/components/Lightbox";
 import { PageHeader } from "@/components/PageHeader";
 import { Loading } from "@/components/Loading";
 import type { Match } from "@/lib/types";
@@ -37,6 +38,10 @@ function ShortlistInner() {
 
   const followups = rows.filter((m) => m.verdict === "like" || m.contacted_at);
 
+  const imaged = rows.filter((m) => m.image_url);
+  const idxOf = new Map(imaged.map((m, i) => [m.id, i] as const));
+  const [lb, setLb] = useState<number | null>(null);
+
   return (
     <div>
       <PageHeader title="Shortlist" subtitle="Homes you reacted to — liked, passed, and your follow-up notes." />
@@ -57,9 +62,14 @@ function ShortlistInner() {
       ) : (
         <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%,290px),1fr))" }}>
           {rows.length === 0 && <Empty icon={tab === "liked" ? "💚" : "🗂️"} title={`Nothing ${tab} yet`} />}
-          {rows.map((m) => <MatchCard key={m.match_id} m={m} />)}
+          {rows.map((m) => (
+            <MatchCard key={m.match_id} m={m}
+              onZoom={idxOf.has(m.id) ? () => setLb(idxOf.get(m.id)!) : undefined} />
+          ))}
         </div>
       )}
+
+      <Lightbox items={imaged} index={lb} onIndex={setLb} onClose={() => setLb(null)} />
     </div>
   );
 }

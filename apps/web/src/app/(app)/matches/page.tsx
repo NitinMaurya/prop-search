@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { sectorNum } from "@/lib/format";
@@ -8,6 +8,7 @@ import { useUrlState } from "@/lib/useUrlState";
 import type { Match } from "@/lib/types";
 import { MatchCard } from "@/components/MatchCard";
 import { MatchTable } from "@/components/MatchTable";
+import { Lightbox } from "@/components/Lightbox";
 import { PageHeader } from "@/components/PageHeader";
 import { SkeletonCards } from "@/components/Loading";
 
@@ -73,10 +74,21 @@ function MatchesInner() {
       a[0] === "—" ? 1 : b[0] === "—" ? -1 : Number(a[0]) - Number(b[0]));
   }, [group, matches]);
 
+  const imaged = useMemo(() => matches.filter((m) => m.image_url), [matches]);
+  const idxOf = useMemo(() => {
+    const mp = new Map<number, number>();
+    imaged.forEach((m, i) => mp.set(m.id, i));
+    return mp;
+  }, [imaged]);
+  const [lb, setLb] = useState<number | null>(null);
+
   const renderBlock = (rows: Match[]) =>
     view === "table"
       ? <MatchTable rows={rows} />
-      : <Grid>{rows.map((m) => <MatchCard key={m.match_id} m={m} />)}</Grid>;
+      : <Grid>{rows.map((m) => (
+          <MatchCard key={m.match_id} m={m}
+            onZoom={idxOf.has(m.id) ? () => setLb(idxOf.get(m.id)!) : undefined} />
+        ))}</Grid>;
 
   return (
     <div>
@@ -126,6 +138,8 @@ function MatchesInner() {
           </section>
         ))
       ) : renderBlock(matches))}
+
+      <Lightbox items={imaged} index={lb} onIndex={setLb} onClose={() => setLb(null)} />
     </div>
   );
 }
