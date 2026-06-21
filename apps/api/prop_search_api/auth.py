@@ -1,13 +1,28 @@
 """Auth dependency: verify the Supabase user JWT and return the user_id (the `sub` claim).
 
-Supabase signs user tokens with HS256 using the project's JWT secret and the audience
-`authenticated`. The web app sends it as `Authorization: Bearer <token>`.
+Modern Supabase projects sign user tokens with **asymmetric keys (ES256)** and publish the
+public keys at `<project>/auth/v1/.well-known/jwks.json`. We verify against that JWKS
+(cached). Audience is `authenticated`. (Legacy HS256-shared-secret projects would instead
+set SUPABASE_JWT_SECRET; this project uses ES256.)
 """
 
 import jwt
 from fastapi import Header, HTTPException
+from jwt import PyJWKClient
 
 from .config import settings
+
+_jwk_client: PyJWKClient | None = None
+
+
+def _jwks() -> PyJWKClient:
+    global _jwk_client
+    if _jwk_client is None:
+        if not settings.supabase_url:
+            raise HTTPException(status_code=500, detail="SUPABASE_URL not configured")
+        url = settings.supabase_url.rstrip("/") + "/auth/v1/.well-known/jwks.json"
+        _jwk_client = PyJWKClient(url)
+    return _jwk_client
 
 
 def get_user_id(authorization: str = Header(default="")) -> str:
@@ -15,11 +30,15 @@ def get_user_id(authorization: str = Header(default="")) -> str:
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization[len("Bearer "):]
-    if not settings.jwt_secret:
-        raise HTTPException(status_code=500, detail="SUPABASE_JWT_SECRET not configured")
     try:
-        payload = jwt.decode(
-            token, settings.jwt_secret, algorithms=["HS256"], audience="authenticated")
+        # Legacy HS256 fallback if a shared secret is configured; else verify via JWKS.
+        if settings.jwt_secret:
+            payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"],
+                                 audience="authenticated")
+        else:
+            signing_key = _jwks().get_signing_key_from_jwt(token)
+            payload = jwt.decode(token, signing_key.key, algorithms=["ES256", "RS256"],
+                                 audience="authenticated")
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
     user_id = payload.get("sub")

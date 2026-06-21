@@ -11,6 +11,9 @@ except ImportError:
 
 class Settings:
     database_url: str = os.environ.get("DATABASE_URL", "")
+    # Project URL → used to fetch the JWKS for ES256 token verification (modern Supabase).
+    supabase_url: str = os.environ.get("SUPABASE_URL", "")
+    # Optional legacy HS256 shared secret (only for older projects).
     jwt_secret: str = os.environ.get("SUPABASE_JWT_SECRET", "")
     # Comma-separated allowed web origins for CORS.
     web_origins: list[str] = [
