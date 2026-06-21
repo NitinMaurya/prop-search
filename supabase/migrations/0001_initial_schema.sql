@@ -49,7 +49,8 @@ create table runs (
     parsed_ok    integer default 0,
     parse_errors integer default 0,
     new_matches  integer default 0,
-    notified     integer default 0
+    notified     integer default 0,
+    error        text                  -- set on a run-level failure, else null
 );
 
 create table settings (

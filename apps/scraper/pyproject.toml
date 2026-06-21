@@ -1,0 +1,23 @@
+[project]
+name = "prop-search-scraper"
+version = "2.0.0"
+description = "prop-search v2 scraper node — scrape → match → push to Supabase"
+requires-python = ">=3.11"
+dependencies = [
+    "prop-search-core",
+    "psycopg[binary]>=3.1",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+prop-search-scrape = "prop_search_scraper.cli:main"
+
+[tool.uv.sources]
+prop-search-core = { path = "../../packages/core", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["prop_search_scraper"]
