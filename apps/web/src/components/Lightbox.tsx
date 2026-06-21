@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { rupeesToCr } from "@/lib/format";
+import { PASS_REASONS, useMatchActions } from "@/lib/useMatchActions";
 import type { Match } from "@/lib/types";
 
 /** Fullscreen image gallery over the listings that have a photo. Prev/next + Esc/arrows. */
@@ -22,8 +23,10 @@ export function Lightbox({ items, index, onIndex, onClose }: {
     return () => window.removeEventListener("keydown", h);
   }, [index, items.length, onIndex, onClose]);
 
-  if (index === null || !items[index]) return null;
-  const m = items[index];
+  const m = index !== null ? items[index] : undefined;
+  const { feedback, contacted } = useMatchActions(m);
+
+  if (!m || index === null) return null;
   const pct = m.score != null ? Math.round(m.score * 100) : null;
 
   return (
@@ -75,8 +78,36 @@ export function Lightbox({ items, index, onIndex, onClose }: {
             </div>
           )}
 
+          {/* same actions as the cards: like / pass (+ reasons) / contacted */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button onClick={() => feedback.mutate({ v: "nope" })}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold border ${
+                m.verdict === "nope" ? "bg-red-500 text-white border-red-500"
+                  : "text-white border-white/30 hover:bg-white/10"}`}>👎 Pass</button>
+            <button onClick={() => feedback.mutate({ v: "like" })}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold border ${
+                m.verdict === "like" ? "bg-green-600 text-white border-green-600"
+                  : "text-white border-white/30 hover:bg-white/10"}`}>👍 Like</button>
+            <button onClick={() => contacted.mutate()}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold border ${
+                m.contacted_at ? "bg-blue-600 text-white border-blue-600"
+                  : "text-white border-white/30 hover:bg-white/10"}`}>
+              {m.contacted_at ? "✅ Contacted" : "📞 Contact"}{m.notes ? " 📝" : ""}
+            </button>
+          </div>
+          {m.verdict === "nope" && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {PASS_REASONS.map(([code, label]) => (
+                <button key={code} onClick={() => feedback.mutate({ v: "nope", reason: code })}
+                  className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
+                    m.pass_reason === code ? "bg-red-500 text-white border-red-500"
+                      : "text-white/80 border-white/25 hover:bg-white/10"}`}>{label}</button>
+              ))}
+            </div>
+          )}
+
           {m.description && (
-            <p className="mt-3 text-sm leading-relaxed text-white/80 max-h-[26vh] overflow-y-auto pr-2">
+            <p className="mt-3 text-sm leading-relaxed text-white/80 max-h-[24vh] overflow-y-auto pr-2">
               {m.description}
             </p>
           )}
