@@ -41,20 +41,29 @@ export function Lightbox({ items, index, onIndex, onClose }: {
       <div className="max-w-4xl w-full" onClick={(e) => e.stopPropagation()}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={m.image_url!} alt="" className="w-full max-h-[78vh] object-contain rounded-xl bg-black" />
-        <div className="mt-3 flex items-center justify-between gap-4 text-white">
-          <div className="min-w-0">
-            <div className="font-bold truncate">{m.title ?? "Untitled listing"}</div>
-            <div className="text-sm text-white/70">
-              {rupeesToCr(m.price)}{m.sector ? ` · 📍 ${m.sector}` : ""} · {index + 1} / {items.length}
-            </div>
+      </div>
+
+      {/* fixed bottom banner: title as a heading + meta + open-listing */}
+      <div onClick={(e) => e.stopPropagation()}
+        className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/75 to-transparent
+                   px-5 sm:px-10 pt-10 pb-6 flex items-end justify-between gap-5">
+        <div className="min-w-0">
+          <h2 className="text-white text-xl sm:text-2xl font-extrabold tracking-tight leading-tight truncate">
+            {m.title ?? "Untitled listing"}
+          </h2>
+          <div className="mt-1 text-sm font-semibold text-white/75 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {m.price ? <span className="text-white">{rupeesToCr(m.price)}</span> : null}
+            {m.size_sqm ? <span>{Math.round(m.size_sqm)} sqm</span> : null}
+            {m.sector ? <span>📍 {m.sector}</span> : null}
+            <span className="text-white/50">{index + 1} / {items.length}</span>
           </div>
-          {m.url && (
-            <a href={m.url} target="_blank" rel="noopener"
-              className="ps-btn-grad rounded-xl px-4 py-2 font-bold shrink-0 no-underline">
-              Open listing ↗
-            </a>
-          )}
         </div>
+        {m.url && (
+          <a href={m.url} target="_blank" rel="noopener"
+            className="ps-btn-grad rounded-xl px-5 py-2.5 font-bold shrink-0 no-underline whitespace-nowrap">
+            Open listing ↗
+          </a>
+        )}
       </div>
     </div>
   );
