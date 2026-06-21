@@ -35,7 +35,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className={`${collapsed ? "w-[68px]" : "w-60"} shrink-0 sticky top-0 h-screen self-start
+    <aside className={`${collapsed ? "w-[68px]" : "w-60"} shrink-0 h-full overflow-y-auto
       bg-[var(--color-surface)] border-r border-[var(--color-line)] p-3 flex flex-col
       transition-[width] duration-200`}>
       {/* brand + collapse toggle */}

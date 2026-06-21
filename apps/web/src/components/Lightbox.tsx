@@ -51,35 +51,38 @@ export function Lightbox({ items, index, onIndex, onClose }: {
       <div onClick={(e) => e.stopPropagation()}
         className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/85 to-transparent
                    px-5 sm:px-12 pt-16 pb-8 flex items-end justify-between gap-6">
-        <div className="min-w-0 max-w-3xl">
+        {/* left: heading + meta + description */}
+        <div className="min-w-0 flex-1">
           <h2 className="text-white text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight">
             {m.title ?? "Untitled listing"}
           </h2>
-
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 font-semibold">
             {m.price ? <span className="text-white text-lg">{rupeesToCr(m.price)}</span> : null}
             {m.size_sqm ? <span className="text-white/75">{Math.round(m.size_sqm)} sqm</span> : null}
             {m.sector ? <span className="text-white/75">📍 {m.sector}</span> : null}
-            {pct != null && (
-              <span className="text-xs font-extrabold rounded-full px-2.5 py-1 bg-white/15 text-white">
-                {pct}% match
-              </span>
-            )}
             <span className="text-white/45 text-sm">{index + 1} / {items.length}</span>
           </div>
+          {m.description && (
+            <p className="mt-3 text-sm leading-relaxed text-white/80 max-h-[22vh] overflow-y-auto pr-2">
+              {m.description}
+            </p>
+          )}
+        </div>
 
-          {(m.advertiser || m.ownership || m.approving_authority) && (
-            <div className="mt-2 flex flex-wrap gap-2">
+        {/* right: tags + actions, inline and right-aligned */}
+        <div className="shrink-0 flex flex-col items-end gap-2 max-w-[46%]">
+          {(pct != null || m.advertiser || m.ownership || m.approving_authority) && (
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {pct != null && (
+                <span className="text-xs font-extrabold rounded-full px-2.5 py-1 bg-white/15 text-white">{pct}% match</span>
+              )}
               {[m.advertiser, m.ownership, m.approving_authority].filter(Boolean).map((chip, i) => (
-                <span key={i} className="text-xs font-semibold rounded-md px-2 py-1 bg-white/10 text-white/80">
-                  {chip}
-                </span>
+                <span key={i} className="text-xs font-semibold rounded-md px-2 py-1 bg-white/10 text-white/80">{chip}</span>
               ))}
             </div>
           )}
 
-          {/* same actions as the cards: like / pass (+ reasons) / contacted */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <button onClick={() => feedback.mutate({ v: "nope" })}
               className={`px-4 py-1.5 rounded-lg text-sm font-bold border ${
                 m.verdict === "nope" ? "bg-red-500 text-white border-red-500"
@@ -95,8 +98,9 @@ export function Lightbox({ items, index, onIndex, onClose }: {
               {m.contacted_at ? "✅ Contacted" : "📞 Contact"}{m.notes ? " 📝" : ""}
             </button>
           </div>
+
           {m.verdict === "nope" && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap justify-end gap-1.5">
               {PASS_REASONS.map(([code, label]) => (
                 <button key={code} onClick={() => feedback.mutate({ v: "nope", reason: code })}
                   className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
@@ -106,19 +110,13 @@ export function Lightbox({ items, index, onIndex, onClose }: {
             </div>
           )}
 
-          {m.description && (
-            <p className="mt-3 text-sm leading-relaxed text-white/80 max-h-[24vh] overflow-y-auto pr-2">
-              {m.description}
-            </p>
+          {m.url && (
+            <a href={m.url} target="_blank" rel="noopener"
+              className="ps-btn-grad rounded-xl px-6 py-3 font-bold no-underline whitespace-nowrap mt-1">
+              Open listing ↗
+            </a>
           )}
         </div>
-
-        {m.url && (
-          <a href={m.url} target="_blank" rel="noopener"
-            className="ps-btn-grad rounded-xl px-6 py-3 font-bold shrink-0 no-underline whitespace-nowrap">
-            Open listing ↗
-          </a>
-        )}
       </div>
     </div>
   );
