@@ -65,7 +65,7 @@ def list_matches(uid: str) -> list[dict]:
     with pool().connection() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT m.id AS match_id, m.requirement_id, m.score, l.*, "
-            "f.verdict AS verdict, f.reason AS pass_reason, "
+            "r.owner AS owner, f.verdict AS verdict, f.reason AS pass_reason, "
             "t.contacted_at AS contacted_at, t.notes AS notes "
             "FROM matches m "
             "JOIN requirements r ON r.id = m.requirement_id AND r.user_id = %(uid)s "

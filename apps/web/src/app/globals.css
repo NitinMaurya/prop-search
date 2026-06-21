@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/* Design tokens ported from the v1 MVP (indigo→violet brand on a cool slate canvas). */
+@theme {
+  --color-bg: #d6dce8;
+  --color-surface: #ffffff;
+  --color-ink: #0f172a;
+  --color-muted: #64748b;
+  --color-line: #dfe3ec;
+  --color-brand: #4f46e5;
+  --color-brand-dk: #4338ca;
+  --color-brand-soft: #eef2ff;
+  --color-brand2: #8b5cf6;
+}
+
+:root {
+  --grad: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 10px 26px -12px rgba(16, 24, 40, 0.16);
+  --shadow-hi: 0 6px 16px -6px rgba(99, 102, 241, 0.18), 0 22px 48px -18px rgba(124, 58, 237, 0.36);
+}
+
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  background:
+    radial-gradient(1100px 460px at 50% -8%, rgba(124, 58, 237, 0.14), transparent 62%) fixed,
+    radial-gradient(900px 360px at 88% 2%, rgba(79, 70, 229, 0.1), transparent 60%) fixed,
+    linear-gradient(180deg, #e4e8f2 0%, var(--color-bg) 52%) fixed;
+  color: var(--color-ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* reusable bits */
+.ps-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.ps-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-hi); }
+
+.ps-btn-grad {
+  background: var(--grad);
+  color: #fff;
+  box-shadow: 0 8px 20px -8px rgba(124, 58, 237, 0.6);
+}
+.ps-btn-grad:hover { transform: translateY(-1px); }

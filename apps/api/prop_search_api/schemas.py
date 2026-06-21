@@ -41,6 +41,7 @@ class MatchOut(BaseModel):
     description: Optional[str] = None
     is_stale: Optional[bool] = None
     first_seen_at: Optional[str] = None
+    owner: Optional[str] = None
     # the user's per-listing state
     verdict: Optional[Literal["like", "nope"]] = None
     pass_reason: Optional[str] = None

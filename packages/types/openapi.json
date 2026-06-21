@@ -781,6 +781,17 @@
             ],
             "title": "First Seen At"
           },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
           "verdict": {
             "anyOf": [
               {
