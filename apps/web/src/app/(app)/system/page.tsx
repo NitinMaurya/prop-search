@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
+import { Loading } from "@/components/Loading";
 
 export default function SystemPage() {
   const { data, isLoading } = useQuery({ queryKey: ["system"], queryFn: api.getSystem });
@@ -11,7 +12,7 @@ export default function SystemPage() {
   return (
     <div>
       <PageHeader title="System" subtitle="Health of the unattended scrape pipeline." />
-      {isLoading && <p className="text-[var(--color-muted)]">Loading…</p>}
+      {isLoading && <Loading label="Loading system status…" />}
       {data && (
         <>
           <div className="grid gap-3 mb-6" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))" }}>

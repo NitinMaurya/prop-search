@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { rupeesToCr } from "@/lib/format";
 import { MatchCard } from "@/components/MatchCard";
 import { PageHeader } from "@/components/PageHeader";
+import { Loading } from "@/components/Loading";
 import type { Match } from "@/lib/types";
 
 const TABS = [
@@ -18,7 +19,7 @@ export default function ShortlistPage() {
   const [tab, setTab] = useState("liked");
   const showCode = tab === "passed" ? "passed" : tab === "liked" ? "liked" : "all";
 
-  const { data: rows = [] } = useQuery({
+  const { data: rows = [], isLoading } = useQuery({
     queryKey: ["matches", showCode, "shortlist"],
     queryFn: () => api.listMatches({ show: showCode, sort: "best" }),
   });
@@ -37,7 +38,7 @@ export default function ShortlistPage() {
         ))}
       </div>
 
-      {tab === "followups" ? (
+      {isLoading ? <Loading /> : tab === "followups" ? (
         <div className="flex flex-col gap-3">
           {followups.length === 0 && <Empty icon="📞" title="No follow-ups yet" />}
           {followups.map((m) => <FollowupRow key={m.id} m={m} />)}

@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/PageHeader";
+import { Loading } from "@/components/Loading";
 
 export default function SettingsPage() {
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ["settings"], queryFn: api.getSettings });
+  const { data, isLoading } = useQuery({ queryKey: ["settings"], queryFn: api.getSettings });
   const [form, setForm] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
 
@@ -25,6 +26,7 @@ export default function SettingsPage() {
     <div className="max-w-2xl">
       <PageHeader title="Settings" subtitle="How listings are scored and matched. Changes apply on the next scrape." />
 
+      {isLoading ? <Loading label="Loading settings…" /> : (
       <div className="ps-card p-6 space-y-5">
         <Row label="Match threshold" hint="Minimum score (0–1) for a listing to surface">
           <input type="number" step="0.05" min="0" max="1" className="inp" value={num("threshold")} onChange={(e) => set("threshold", e.target.value)} />
@@ -47,6 +49,7 @@ export default function SettingsPage() {
           {saved && <span className="text-sm text-green-600 font-semibold">✓ Saved</span>}
         </div>
       </div>
+      )}
       <style jsx>{`
         .inp { width: 100%; border: 1px solid var(--color-line); border-radius: 11px; padding: 0.5rem 0.75rem; outline: none; }
         .inp:focus { border-color: var(--color-brand); }

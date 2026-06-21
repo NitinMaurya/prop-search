@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
+import { Spinner } from "@/components/Loading";
 import { useSession } from "@/lib/useSession";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -14,7 +15,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [loading, session, router]);
 
   if (loading || !session) {
-    return <div className="min-h-screen flex items-center justify-center text-[var(--color-muted)]">Loading…</div>;
+    return <div className="min-h-screen flex items-center justify-center"><Spinner size={32} /></div>;
   }
 
   return (

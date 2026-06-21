@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { rupeesToCr, CR } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
+import { Loading } from "@/components/Loading";
 import type { Requirement, RequirementInput } from "@/lib/types";
 
 const TYPES = [
@@ -38,8 +39,7 @@ export default function RequirementsPage() {
         </button>
       </div>
 
-      {isLoading && <p className="text-[var(--color-muted)]">Loading…</p>}
-
+      {isLoading ? <Loading label="Loading requirements…" /> : (
       <div className="ps-card overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -69,6 +69,7 @@ export default function RequirementsPage() {
           </tbody>
         </table>
       </div>
+      )}
 
       {editing && (
         <RequirementDialog

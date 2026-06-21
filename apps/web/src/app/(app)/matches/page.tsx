@@ -8,6 +8,7 @@ import type { Match } from "@/lib/types";
 import { MatchCard } from "@/components/MatchCard";
 import { MatchTable } from "@/components/MatchTable";
 import { PageHeader } from "@/components/PageHeader";
+import { SkeletonCards } from "@/components/Loading";
 
 const SHOW = [
   { code: "liked_new", label: "👍 Liked & new" },
@@ -88,7 +89,7 @@ export default function MatchesPage() {
         </label>
       </div>
 
-      {isLoading && <p className="text-[var(--color-muted)]">Loading…</p>}
+      {isLoading && <SkeletonCards />}
       {error && <p className="text-red-600 text-sm">Couldn’t load matches: {(error as Error).message}</p>}
       {!isLoading && !matches.length && (
         <div className="ps-card p-12 text-center">
@@ -98,7 +99,7 @@ export default function MatchesPage() {
         </div>
       )}
 
-      {groups ? (
+      {!isLoading && matches.length > 0 && (groups ? (
         groups.map(([sec, rows]) => (
           <section key={sec} className="mb-6">
             <h2 className="text-lg font-extrabold border-b-2 border-[var(--color-line)] pb-2 mb-3 flex items-center gap-2">
@@ -108,7 +109,7 @@ export default function MatchesPage() {
             {renderBlock(rows)}
           </section>
         ))
-      ) : renderBlock(matches)}
+      ) : renderBlock(matches))}
     </div>
   );
 }
