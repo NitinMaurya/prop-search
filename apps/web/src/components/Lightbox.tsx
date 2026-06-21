@@ -24,6 +24,7 @@ export function Lightbox({ items, index, onIndex, onClose }: {
 
   if (index === null || !items[index]) return null;
   const m = items[index];
+  const pct = m.score != null ? Math.round(m.score * 100) : null;
 
   return (
     <div className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-4 sm:p-8"
@@ -43,24 +44,47 @@ export function Lightbox({ items, index, onIndex, onClose }: {
         <img src={m.image_url!} alt="" className="w-full max-h-[78vh] object-contain rounded-xl bg-black" />
       </div>
 
-      {/* fixed bottom banner: title as a heading + meta + open-listing */}
+      {/* fixed bottom banner: heading + full details + open-listing */}
       <div onClick={(e) => e.stopPropagation()}
-        className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/75 to-transparent
-                   px-5 sm:px-10 pt-10 pb-6 flex items-end justify-between gap-5">
-        <div className="min-w-0">
-          <h2 className="text-white text-xl sm:text-2xl font-extrabold tracking-tight leading-tight truncate">
+        className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/85 to-transparent
+                   px-5 sm:px-12 pt-16 pb-8 flex items-end justify-between gap-6">
+        <div className="min-w-0 max-w-3xl">
+          <h2 className="text-white text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight">
             {m.title ?? "Untitled listing"}
           </h2>
-          <div className="mt-1 text-sm font-semibold text-white/75 flex flex-wrap items-center gap-x-3 gap-y-1">
-            {m.price ? <span className="text-white">{rupeesToCr(m.price)}</span> : null}
-            {m.size_sqm ? <span>{Math.round(m.size_sqm)} sqm</span> : null}
-            {m.sector ? <span>📍 {m.sector}</span> : null}
-            <span className="text-white/50">{index + 1} / {items.length}</span>
+
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 font-semibold">
+            {m.price ? <span className="text-white text-lg">{rupeesToCr(m.price)}</span> : null}
+            {m.size_sqm ? <span className="text-white/75">{Math.round(m.size_sqm)} sqm</span> : null}
+            {m.sector ? <span className="text-white/75">📍 {m.sector}</span> : null}
+            {pct != null && (
+              <span className="text-xs font-extrabold rounded-full px-2.5 py-1 bg-white/15 text-white">
+                {pct}% match
+              </span>
+            )}
+            <span className="text-white/45 text-sm">{index + 1} / {items.length}</span>
           </div>
+
+          {(m.advertiser || m.ownership || m.approving_authority) && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {[m.advertiser, m.ownership, m.approving_authority].filter(Boolean).map((chip, i) => (
+                <span key={i} className="text-xs font-semibold rounded-md px-2 py-1 bg-white/10 text-white/80">
+                  {chip}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {m.description && (
+            <p className="mt-3 text-sm leading-relaxed text-white/80 max-h-[26vh] overflow-y-auto pr-2">
+              {m.description}
+            </p>
+          )}
         </div>
+
         {m.url && (
           <a href={m.url} target="_blank" rel="noopener"
-            className="ps-btn-grad rounded-xl px-5 py-2.5 font-bold shrink-0 no-underline whitespace-nowrap">
+            className="ps-btn-grad rounded-xl px-6 py-3 font-bold shrink-0 no-underline whitespace-nowrap">
             Open listing ↗
           </a>
         )}
