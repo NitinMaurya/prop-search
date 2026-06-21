@@ -2,6 +2,8 @@
 (bypasses RLS); every user-scoped query passes the authenticated user_id explicitly.
 """
 
+from datetime import datetime, timezone
+
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -19,6 +21,10 @@ SCRAPE_VERSION_TTL = 300          # re-check for a new scrape every 5 min (one t
                                   # — fine since scrapes run every 6h
 
 _pool: ConnectionPool | None = None
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def pool() -> ConnectionPool:
@@ -81,7 +87,23 @@ def _matches_key(uid: str) -> str:
 
 
 def invalidate_matches(uid: str) -> None:
+    """Drop the cache so the next read re-queries (use when the match SET changes:
+    requirement edits, settings)."""
     cache.invalidate(_matches_key(uid))
+
+
+def _patch_cached_match(uid: str, listing_id: int, changes: dict) -> None:
+    """Update a per-user annotation (verdict/reason/contacted/notes) on the listing in the
+    cached matches list IN PLACE — no re-query. These are tracking fields; they don't
+    change which listings match, so re-running the join would be wasteful."""
+    entry = cache.get(_matches_key(uid))
+    if entry is None:
+        return
+    _ver, rows = entry
+    for m in rows:
+        if m.get("id") == listing_id:
+            m.update(changes)
+            break
 
 
 def _scrape_version() -> str:
@@ -146,9 +168,11 @@ def set_feedback(uid: str, listing_id: int, verdict: str, reason: str | None) ->
                 "ON CONFLICT (user_id, listing_id) DO UPDATE SET verdict = 'nope', "
                 "reason = excluded.reason, updated_at = now()",
                 (uid, listing_id, new_reason))
+            final = {"verdict": "nope", "pass_reason": new_reason}
         elif row and row["verdict"] == verdict:
             cur.execute("DELETE FROM feedback WHERE user_id = %s AND listing_id = %s",
                         (uid, listing_id))
+            final = {"verdict": None, "pass_reason": None}
         else:
             cur.execute(
                 "INSERT INTO feedback (user_id, listing_id, verdict, reason, updated_at) "
@@ -156,7 +180,8 @@ def set_feedback(uid: str, listing_id: int, verdict: str, reason: str | None) ->
                 "ON CONFLICT (user_id, listing_id) DO UPDATE SET verdict = excluded.verdict, "
                 "reason = NULL, updated_at = now()",
                 (uid, listing_id, verdict))
-    invalidate_matches(uid)
+            final = {"verdict": verdict, "pass_reason": None}
+    _patch_cached_match(uid, listing_id, final)
 
 
 # ----------------------------------------------------------------- tracking (D29)
@@ -173,7 +198,8 @@ def set_contacted(uid: str, listing_id: int) -> bool:
             "ON CONFLICT (user_id, listing_id) DO UPDATE SET "
             "contacted_at = excluded.contacted_at, updated_at = now()",
             (uid, listing_id, now_contacted))
-    invalidate_matches(uid)
+    _patch_cached_match(uid, listing_id,
+                        {"contacted_at": _now_iso() if now_contacted else None})
     return now_contacted
 
 
@@ -186,7 +212,7 @@ def set_note(uid: str, listing_id: int, notes: str | None) -> None:
             "ON CONFLICT (user_id, listing_id) DO UPDATE SET notes = excluded.notes, "
             "updated_at = now()",
             (uid, listing_id, clean))
-    invalidate_matches(uid)
+    _patch_cached_match(uid, listing_id, {"notes": clean})
 
 
 # ----------------------------------------------------------------- settings (global)
@@ -208,7 +234,8 @@ def update_settings(values: dict) -> dict:
                 "INSERT INTO settings (key, value) VALUES (%s, %s) "
                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
                 (k, str(v)))
-    cache.invalidate("settings")
+    # settings (e.g. NOIDA filter) affect the matches query for everyone — clear all.
+    cache.clear()
     return get_settings()
 
 
