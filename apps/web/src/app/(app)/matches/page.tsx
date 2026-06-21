@@ -10,6 +10,7 @@ import { MatchCard } from "@/components/MatchCard";
 import { MatchTable } from "@/components/MatchTable";
 import { Lightbox } from "@/components/Lightbox";
 import { PageHeader } from "@/components/PageHeader";
+import { Select } from "@/components/Select";
 import { SkeletonCards } from "@/components/Loading";
 
 const SHOW = [
@@ -147,18 +148,4 @@ function MatchesInner() {
 
 function Grid({ children }: { children: React.ReactNode }) {
   return <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%,320px),1fr))" }}>{children}</div>;
-}
-
-function Select({ label, value, onChange, options }: {
-  label: string; value: string; onChange: (v: string) => void; options: [string, string][];
-}) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-xs font-bold uppercase tracking-wide text-[var(--color-muted)]">{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)}
-        className="rounded-xl border border-[var(--color-line)] bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-[var(--color-brand)]">
-        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-      </select>
-    </label>
-  );
 }
