@@ -13,18 +13,38 @@ const PASS_REASONS: [string, string][] = [
   ["disliked", "👎 Didn’t like"],
 ];
 
+type Ctx = { prev: [readonly unknown[], Match[] | undefined][] };
+
 export function MatchCard({ m }: { m: Match }) {
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["matches"] });
 
-  const feedback = useMutation({
-    mutationFn: ({ v, reason }: { v: Verdict; reason?: string }) =>
-      api.setFeedback(m.id, v, reason),
-    onSuccess: invalidate,
+  // Optimistic cache patching: update the listing across all cached match lists so the
+  // card responds instantly (the DB round-trip is ~1s away), then reconcile on settle.
+  const optimistic = async (changes: Partial<Match>): Promise<Ctx> => {
+    await qc.cancelQueries({ queryKey: ["matches"] });
+    const prev = qc.getQueriesData<Match[]>({ queryKey: ["matches"] });
+    qc.setQueriesData<Match[]>({ queryKey: ["matches"] }, (old) =>
+      old?.map((x) => (x.id === m.id ? { ...x, ...changes } : x)));
+    return { prev };
+  };
+  const rollback = (_e: unknown, _v: unknown, ctx?: Ctx) =>
+    ctx?.prev?.forEach(([k, d]) => qc.setQueryData(k, d));
+  const settle = () => qc.invalidateQueries({ queryKey: ["matches"] });
+
+  const feedback = useMutation<void, Error, { v: Verdict; reason?: string }, Ctx>({
+    mutationFn: ({ v, reason }) => api.setFeedback(m.id, v, reason),
+    onMutate: ({ v, reason }) =>
+      reason != null
+        ? optimistic({ verdict: "nope", pass_reason: m.pass_reason === reason ? null : reason })
+        : optimistic({ verdict: m.verdict === v ? null : v, pass_reason: null }),
+    onError: rollback,
+    onSettled: settle,
   });
-  const contacted = useMutation({
+  const contacted = useMutation<{ contacted: boolean }, Error, void, Ctx>({
     mutationFn: () => api.setContacted(m.id),
-    onSuccess: invalidate,
+    onMutate: () => optimistic({ contacted_at: m.contacted_at ? null : new Date().toISOString() }),
+    onError: rollback,
+    onSettled: settle,
   });
 
   const pct = m.score != null ? Math.round(m.score * 100) : null;

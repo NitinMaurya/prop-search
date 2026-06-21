@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { rupeesToCr } from "@/lib/format";
+import { useUrlState } from "@/lib/useUrlState";
 import { MatchCard } from "@/components/MatchCard";
 import { PageHeader } from "@/components/PageHeader";
 import { Loading } from "@/components/Loading";
@@ -16,7 +17,17 @@ const TABS = [
 ];
 
 export default function ShortlistPage() {
-  const [tab, setTab] = useState("liked");
+  return (
+    <Suspense fallback={<Loading />}>
+      <ShortlistInner />
+    </Suspense>
+  );
+}
+
+function ShortlistInner() {
+  const { get, set } = useUrlState();
+  const tab = get("tab", "liked");
+  const setTab = (k: string) => set({ tab: k === "liked" ? null : k });
   const showCode = tab === "passed" ? "passed" : tab === "liked" ? "liked" : "all";
 
   const { data: rows = [], isLoading } = useQuery({

@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { sectorNum } from "@/lib/format";
+import { useUrlState } from "@/lib/useUrlState";
 import type { Match } from "@/lib/types";
 import { MatchCard } from "@/components/MatchCard";
 import { MatchTable } from "@/components/MatchTable";
@@ -26,11 +27,26 @@ const SORT = [
 ];
 
 export default function MatchesPage() {
-  const [show, setShow] = useState("liked_new");
-  const [sort, setSort] = useState("best");
-  const [sector, setSector] = useState("");
-  const [group, setGroup] = useState(false);
-  const [view, setView] = useState<"cards" | "table">("cards");
+  return (
+    <Suspense fallback={<SkeletonCards />}>
+      <MatchesInner />
+    </Suspense>
+  );
+}
+
+function MatchesInner() {
+  const { get, set } = useUrlState();
+  const show = get("show", "liked_new");
+  const sort = get("sort", "best");
+  const sector = get("sec", "");
+  const group = get("grp") === "1";
+  const view = get("view") === "table" ? "table" : "cards";
+
+  const setShow = (v: string) => set({ show: v === "liked_new" ? null : v });
+  const setSort = (v: string) => set({ sort: v === "best" ? null : v });
+  const setSector = (v: string) => set({ sec: v });
+  const setGroup = (on: boolean) => set({ grp: on ? "1" : null });
+  const setView = (v: string) => set({ view: v === "cards" ? null : v });
 
   const { data: matches = [], isLoading, error } = useQuery({
     queryKey: ["matches", show, sort, sector],
