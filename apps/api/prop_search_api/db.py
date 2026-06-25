@@ -4,6 +4,7 @@
 
 from datetime import datetime, timezone
 
+from prop_search_core import matcher
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -136,7 +137,8 @@ def list_matches(uid: str) -> list[dict]:
             "WITH cfg AS (SELECT value FROM settings WHERE key = 'noida_authority_only'), "
             "last_run AS (SELECT max(started_at) AS ts FROM runs) "
             "SELECT m.id AS match_id, m.requirement_id, m.score, l.*, "
-            "r.owner AS owner, f.verdict AS verdict, f.reason AS pass_reason, "
+            "r.owner AS owner, r.sectors AS req_sectors, "
+            "f.verdict AS verdict, f.reason AS pass_reason, "
             "t.contacted_at AS contacted_at, t.notes AS notes, "
             "(l.first_seen_at >= (SELECT ts FROM last_run)) AS is_new "
             "FROM matches m "
@@ -150,6 +152,12 @@ def list_matches(uid: str) -> list[dict]:
             "ORDER BY m.score DESC NULLS LAST",
             {"uid": uid})
         rows = cur.fetchall()
+    # Hard sector filter (D24): drop matches whose listing isn't in the requirement's
+    # CURRENT sectors — old match rows persist after a requirement's sectors change.
+    rows = [m for m in rows
+            if matcher.sector_matches(m.get("sector"), m.get("req_sectors") or [])]
+    for m in rows:
+        m.pop("req_sectors", None)
     cache.put(_matches_key(uid), (ver, rows), MATCHES_TTL)
     return rows
 
