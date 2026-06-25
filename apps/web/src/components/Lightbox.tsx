@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { rupeesToCr } from "@/lib/format";
+import { rupeesToCr, sectorLabel } from "@/lib/format";
 import { PASS_REASONS, useMatchActions } from "@/lib/useMatchActions";
 import type { Match } from "@/lib/types";
 
@@ -59,7 +59,7 @@ export function Lightbox({ items, index, onIndex, onClose }: {
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 font-semibold">
             {m.price ? <span className="text-white text-lg">{rupeesToCr(m.price)}</span> : null}
             {m.size_sqm ? <span className="text-white/75">{Math.round(m.size_sqm)} sqm</span> : null}
-            {m.sector ? <span className="text-white/75">📍 {m.sector}</span> : null}
+            {m.sector ? <span className="text-white/75">📍 {sectorLabel(m.sector)}</span> : null}
             <span className="text-white/45 text-sm">{index + 1} / {items.length}</span>
           </div>
           {m.description && (

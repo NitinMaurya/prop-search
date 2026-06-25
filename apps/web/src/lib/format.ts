@@ -11,10 +11,16 @@ export function sectorNum(sector?: string | null): string | null {
   return m ? m[0] : null;
 }
 
+/** Clean label: just "Sector N" (drops trailing road/area noise like ", Dadri Road"). */
+export function sectorLabel(sector?: string | null): string {
+  const n = sectorNum(sector);
+  return n ? `Sector ${n}` : String(sector ?? "").trim();
+}
+
+/** Maps search by the sector NUMBER only (e.g. "Sector 47 Noida"), not the raw area. */
 export function mapsUrl(sector?: string | null): string {
-  const s = String(sector ?? "").trim();
-  let q = /sector/i.test(s) ? s : `Sector ${s}`;
-  if (!/noida/i.test(q)) q += " Noida";
+  const n = sectorNum(sector);
+  const q = n ? `Sector ${n} Noida` : `${String(sector ?? "").trim()} Noida`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 

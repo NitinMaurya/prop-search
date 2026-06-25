@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { mapsUrl, rupeesToCr } from "@/lib/format";
+import { mapsUrl, rupeesToCr, sectorLabel } from "@/lib/format";
 import { PASS_REASONS, useMatchActions } from "@/lib/useMatchActions";
 import type { Match } from "@/lib/types";
 
@@ -43,7 +43,7 @@ export function MatchCard({ m, onZoom, enableNotes }: {
         {m.sector && (
           <a href={mapsUrl(m.sector)} target="_blank" rel="noopener"
             className="absolute left-2.5 bottom-2.5 text-xs font-semibold text-white bg-black/70 rounded-lg px-2.5 py-1 no-underline hover:bg-blue-600/90">
-            📍 {m.sector}
+            📍 {sectorLabel(m.sector)}
           </a>
         )}
       </div>
