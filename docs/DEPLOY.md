@@ -54,5 +54,11 @@ uv run prop-search-scrape
 ```
 Schedule every 6h with a **systemd timer** (Linux) or **launchd** (macOS).
 
+## 5. Contact button (per user, optional)
+The **Contact** button drives MagicBricks' real "Contact Owner" in each user's *own* logged-in
+browser via a small userscript (no server worker, no extra infra). Each user installs it once
+via Tampermonkey — see `tools/README.md`. Without it, the card still deep-links to the listing
+to click manually.
+
 ## Cost
 Supabase free · Vercel Hobby free · Render free–$7/mo · India box = electricity. ~Near-zero.

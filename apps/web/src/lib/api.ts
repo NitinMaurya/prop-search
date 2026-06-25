@@ -59,9 +59,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ listing_id, verdict, reason: reason ?? null }),
     }),
-  setContacted: (listing_id: number) =>
+  setContacted: (listing_id: number, contacted?: boolean) =>
     request<{ contacted: boolean }>("/tracking/contacted", {
-      method: "POST", body: JSON.stringify({ listing_id }),
+      method: "POST", body: JSON.stringify({ listing_id, contacted: contacted ?? null }),
     }),
   setNote: (listing_id: number, notes: string) =>
     request<void>("/tracking/notes", {

@@ -2,6 +2,7 @@
 
 import { mapsUrl, rupeesToCr, sectorLabel } from "@/lib/format";
 import { useMatchActions } from "@/lib/useMatchActions";
+import { CONTACT_BTN, useContact } from "@/lib/useContact";
 import type { Match } from "@/lib/types";
 
 export function MatchTable({ rows, onZoom }: {
@@ -38,7 +39,9 @@ export function MatchTable({ rows, onZoom }: {
 }
 
 function Row({ m, onZoom }: { m: Match; onZoom?: (id: number) => void }) {
-  const { feedback, contacted } = useMatchActions(m);
+  const { feedback } = useMatchActions(m);
+  const contact = useContact();
+  const cState = contact.stateOf(m.id, m.contacted_at);
   const pct = m.score != null ? Math.round(m.score * 100) : null;
   const canZoom = !!(m.image_url && onZoom);
 
@@ -84,8 +87,16 @@ function Row({ m, onZoom }: { m: Match; onZoom?: (id: number) => void }) {
             className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${m.verdict === "nope" ? "bg-red-500 text-white border-red-500" : "text-red-600 border-red-200 hover:bg-red-50"}`}>👎</button>
           <button onClick={() => feedback.mutate({ v: "like" })}
             className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${m.verdict === "like" ? "bg-green-600 text-white border-green-600" : "text-green-600 border-green-200 hover:bg-green-50"}`}>👍</button>
-          <button onClick={() => contacted.mutate()}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${m.contacted_at ? "bg-blue-600 text-white border-blue-600" : "text-blue-600 border-blue-200 hover:bg-blue-50"}`}>📞</button>
+          <button
+            onClick={() => { if (CONTACT_BTN[cState].canStart) contact.start(m); }}
+            disabled={CONTACT_BTN[cState].disabled}
+            title={CONTACT_BTN[cState].label}
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${
+              cState === "done" ? "bg-blue-600 text-white border-blue-600"
+                : cState === "pending" ? "text-slate-400 border-slate-200 cursor-wait"
+                : cState === "failed" ? "text-amber-700 border-amber-300 hover:bg-amber-50"
+                : "text-blue-600 border-blue-200 hover:bg-blue-50"
+            }`}>{cState === "done" ? "✅" : cState === "pending" ? "⏳" : cState === "failed" ? "⚠️" : "📞"}</button>
         </div>
       </td>
     </tr>

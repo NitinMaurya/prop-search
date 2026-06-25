@@ -59,6 +59,9 @@ class FeedbackIn(BaseModel):
 
 class ContactedIn(BaseModel):
     listing_id: int
+    # None = toggle (manual UI button); explicit True/False = set idempotently
+    # (the auto-contact flow sets True only after MagicBricks confirms).
+    contacted: Optional[bool] = None
 
 
 class NoteIn(BaseModel):

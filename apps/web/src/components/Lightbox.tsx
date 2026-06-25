@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { rupeesToCr, sectorLabel } from "@/lib/format";
 import { PASS_REASONS, useMatchActions } from "@/lib/useMatchActions";
+import { CONTACT_BTN, useContact } from "@/lib/useContact";
 import type { Match } from "@/lib/types";
 
 /** Fullscreen image gallery over the listings that have a photo. Prev/next + Esc/arrows. */
@@ -24,9 +25,11 @@ export function Lightbox({ items, index, onIndex, onClose }: {
   }, [index, items.length, onIndex, onClose]);
 
   const m = index !== null ? items[index] : undefined;
-  const { feedback, contacted } = useMatchActions(m);
+  const { feedback } = useMatchActions(m);
+  const contact = useContact();
 
   if (!m || index === null) return null;
+  const cState = contact.stateOf(m.id, m.contacted_at);
   const pct = m.score != null ? Math.round(m.score * 100) : null;
 
   return (
@@ -91,11 +94,15 @@ export function Lightbox({ items, index, onIndex, onClose }: {
               className={`px-4 py-1.5 rounded-lg text-sm font-bold border ${
                 m.verdict === "like" ? "bg-green-600 text-white border-green-600"
                   : "text-white border-white/30 hover:bg-white/10"}`}>👍 Like</button>
-            <button onClick={() => contacted.mutate()}
+            <button
+              onClick={() => { if (CONTACT_BTN[cState].canStart) contact.start(m); }}
+              disabled={CONTACT_BTN[cState].disabled}
               className={`px-4 py-1.5 rounded-lg text-sm font-bold border ${
-                m.contacted_at ? "bg-blue-600 text-white border-blue-600"
+                cState === "done" ? "bg-blue-600 text-white border-blue-600"
+                  : cState === "pending" ? "text-white/50 border-white/20 cursor-wait"
+                  : cState === "failed" ? "bg-amber-500 text-white border-amber-500"
                   : "text-white border-white/30 hover:bg-white/10"}`}>
-              {m.contacted_at ? "✅ Contacted" : "📞 Contact"}{m.notes ? " 📝" : ""}
+              {CONTACT_BTN[cState].label}{m.notes ? " 📝" : ""}
             </button>
           </div>
 

@@ -193,13 +193,14 @@ def set_feedback(uid: str, listing_id: int, verdict: str, reason: str | None) ->
 
 
 # ----------------------------------------------------------------- tracking (D29)
-def set_contacted(uid: str, listing_id: int) -> bool:
-    """Toggle contacted; returns the new contacted state."""
+def set_contacted(uid: str, listing_id: int, contacted: bool | None = None) -> bool:
+    """Set contacted; returns the new contacted state. `contacted=None` toggles (manual UI),
+    an explicit True/False sets it idempotently (used by the confirmed auto-contact flow)."""
     with pool().connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT contacted_at FROM tracking "
                     "WHERE user_id = %s AND listing_id = %s", (uid, listing_id))
         row = cur.fetchone()
-        now_contacted = not (row and row["contacted_at"])
+        now_contacted = (not (row and row["contacted_at"])) if contacted is None else contacted
         cur.execute(
             "INSERT INTO tracking (user_id, listing_id, contacted_at, updated_at) "
             "VALUES (%s, %s, CASE WHEN %s THEN now() ELSE NULL END, now()) "

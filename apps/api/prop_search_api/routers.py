@@ -103,7 +103,7 @@ def post_feedback(body: FeedbackIn, uid: str = Depends(get_user_id)):
 
 @router.post("/tracking/contacted")
 def post_contacted(body: ContactedIn, uid: str = Depends(get_user_id)):
-    return {"contacted": db.set_contacted(uid, body.listing_id)}
+    return {"contacted": db.set_contacted(uid, body.listing_id, body.contacted)}
 
 
 @router.put("/tracking/notes", status_code=204)

@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { mapsUrl, rupeesToCr, sectorLabel } from "@/lib/format";
 import { PASS_REASONS, useMatchActions } from "@/lib/useMatchActions";
+import { CONTACT_BTN, useContact } from "@/lib/useContact";
 import type { Match } from "@/lib/types";
 
 export function MatchCard({ m, onZoom, enableNotes }: {
@@ -12,9 +13,11 @@ export function MatchCard({ m, onZoom, enableNotes }: {
   onZoom?: () => void;
   enableNotes?: boolean;   // Follow-ups: show notes in the description + an edit button
 }) {
-  const { feedback, contacted } = useMatchActions(m);
+  const { feedback } = useMatchActions(m);
+  const contact = useContact();
+  const cState = contact.stateOf(m.id, m.contacted_at);
+  const cBtn = CONTACT_BTN[cState];
   const pct = m.score != null ? Math.round(m.score * 100) : null;
-  const isContacted = !!m.contacted_at;
   const [notesOpen, setNotesOpen] = useState(false);
 
   return (
@@ -34,11 +37,16 @@ export function MatchCard({ m, onZoom, enableNotes }: {
           <span className="absolute top-2.5 left-2.5 text-xs font-extrabold text-white px-2.5 py-1 rounded-full"
             style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}>🆕 New</span>
         )}
-        <button onClick={() => contacted.mutate()}
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (cBtn.canStart) contact.start(m); }}
+          disabled={cBtn.disabled}
           className={`absolute top-2.5 right-2.5 text-xs font-bold px-2.5 py-1.5 rounded-full border ${
-            isContacted ? "bg-blue-600 text-white border-blue-600" : "bg-white/90 text-blue-600 border-white/70"
+            cState === "done" ? "bg-blue-600 text-white border-blue-600"
+              : cState === "pending" ? "bg-white/90 text-slate-500 border-white/70 cursor-wait"
+              : cState === "failed" ? "bg-amber-50 text-amber-700 border-amber-300"
+              : "bg-white/90 text-blue-600 border-white/70"
           }`}>
-          {isContacted ? "✅ Contacted" : "📞 Contact"}
+          {cBtn.label}
         </button>
         {m.sector && (
           <a href={mapsUrl(m.sector)} target="_blank" rel="noopener"
