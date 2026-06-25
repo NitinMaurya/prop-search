@@ -11,22 +11,26 @@ export function sectorNum(sector?: string | null): string | null {
   return m ? m[0] : null;
 }
 
-/** Clean label: "Sector N" plus a block if present ("Sector 50 · Block B"), dropping
- * road/area noise like ", Dadri Road". */
+/** Sector number + block designator ("Block A" / "B Block"), ignoring road/area noise. */
+function parseSector(sector?: string | null): { n: string | null; block: string | null; raw: string } {
+  const raw = String(sector ?? "").trim();
+  const bm = raw.match(/\bblock\s+([a-z0-9]{1,2})\b/i) || raw.match(/\b([a-z0-9]{1,2})\s+block\b/i);
+  return { n: sectorNum(raw), block: bm ? bm[1].toUpperCase() : null, raw };
+}
+
+/** Clean label: "Sector N" plus a block if present ("Sector 50 · Block B"). */
 export function sectorLabel(sector?: string | null): string {
-  const s = String(sector ?? "");
-  const n = sectorNum(s);
-  if (!n) return s.trim();
-  // block designator: "Block A" / "B Block" (single letter or 1-2 digits)
-  const bm = s.match(/\bblock\s+([a-z0-9]{1,2})\b/i) || s.match(/\b([a-z0-9]{1,2})\s+block\b/i);
-  const block = bm ? bm[1].toUpperCase() : null;
+  const { n, block, raw } = parseSector(sector);
+  if (!n) return raw;
   return block ? `Sector ${n} · Block ${block}` : `Sector ${n}`;
 }
 
-/** Maps search by the sector NUMBER only (e.g. "Sector 47 Noida"), not the raw area. */
+/** Maps search by sector (+ block if present), e.g. "Sector 50 Block B Noida". */
 export function mapsUrl(sector?: string | null): string {
-  const n = sectorNum(sector);
-  const q = n ? `Sector ${n} Noida` : `${String(sector ?? "").trim()} Noida`;
+  const { n, block, raw } = parseSector(sector);
+  const q = n
+    ? `Sector ${n}${block ? ` Block ${block}` : ""} Noida`
+    : `${raw} Noida`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 
