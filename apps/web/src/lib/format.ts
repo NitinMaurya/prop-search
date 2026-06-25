@@ -25,11 +25,11 @@ export function sectorLabel(sector?: string | null): string {
   return block ? `Sector ${n} · Block ${block}` : `Sector ${n}`;
 }
 
-/** Maps search by sector (+ block if present), e.g. "Sector 50 Block B Noida". */
+/** Maps search by sector (+ block if present), e.g. "A Block Sector 36 Noida". */
 export function mapsUrl(sector?: string | null): string {
   const { n, block, raw } = parseSector(sector);
   const q = n
-    ? `Sector ${n}${block ? ` Block ${block}` : ""} Noida`
+    ? `${block ? `${block} Block ` : ""}Sector ${n} Noida`
     : `${raw} Noida`;
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
