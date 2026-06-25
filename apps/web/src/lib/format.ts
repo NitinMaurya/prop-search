@@ -11,10 +11,16 @@ export function sectorNum(sector?: string | null): string | null {
   return m ? m[0] : null;
 }
 
-/** Clean label: just "Sector N" (drops trailing road/area noise like ", Dadri Road"). */
+/** Clean label: "Sector N" plus a block if present ("Sector 50 · Block B"), dropping
+ * road/area noise like ", Dadri Road". */
 export function sectorLabel(sector?: string | null): string {
-  const n = sectorNum(sector);
-  return n ? `Sector ${n}` : String(sector ?? "").trim();
+  const s = String(sector ?? "");
+  const n = sectorNum(s);
+  if (!n) return s.trim();
+  // block designator: "Block A" / "B Block" (single letter or 1-2 digits)
+  const bm = s.match(/\bblock\s+([a-z0-9]{1,2})\b/i) || s.match(/\b([a-z0-9]{1,2})\s+block\b/i);
+  const block = bm ? bm[1].toUpperCase() : null;
+  return block ? `Sector ${n} · Block ${block}` : `Sector ${n}`;
 }
 
 /** Maps search by the sector NUMBER only (e.g. "Sector 47 Noida"), not the raw area. */
