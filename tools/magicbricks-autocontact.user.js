@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         prop-search · MagicBricks auto-contact
 // @namespace    https://github.com/your/prop-search
-// @version      1.2.0
+// @version      1.3.0
 // @description  When prop-search opens a MagicBricks listing with the ?psac= flag, click "Contact Owner" automatically, report the real result back to the prop-search tab, and close. Runs ONLY in your own logged-in browser session.
 // @match        https://www.magicbricks.com/propertyDetails/*
 // @run-at       document-start
@@ -112,10 +112,10 @@
   function dumpClickables() {
     const rows = clickables()
       .filter(visible)
-      .map((el) => ({ tag: el.tagName.toLowerCase(), text: (el.innerText || el.value || "").trim().replace(/\s+/g, " ").slice(0, 60) }))
-      .filter((r) => r.text);
-    log(`visible clickable elements (${rows.length}):`);
-    try { console.table(rows); } catch { rows.forEach((r) => log(" •", r.tag, "—", r.text)); }
+      .map((el) => `${el.tagName.toLowerCase()}${el.className ? "." + String(el.className).trim().replace(/\s+/g, ".") : ""} — ${(el.innerText || el.value || "").trim().replace(/\s+/g, " ").slice(0, 60)}`)
+      .filter((r) => !r.endsWith("— "));
+    // One multi-line string so it copy-pastes cleanly (console.table doesn't).
+    log(`visible clickable elements (${rows.length}):\n` + rows.join("\n"));
   }
 
   // ---------------------------------------------------------------- the click
@@ -136,6 +136,15 @@
   const findByText = (re) =>
     clickables().find((el) => visible(el) && re.test((el.innerText || el.value || "").trim()));
 
+  // The MAIN listing's contact CTA carries the LDP action class — prefer it over the
+  // "Contact Agent" buttons inside recommended/similar-property sections (which would
+  // contact the wrong listing). Fall back to a plain text match if the class moves.
+  const findCta = () => {
+    const main = Array.from(document.querySelectorAll(".mb-ldp__action--btn, [class*='ldp__action--btn']"))
+      .find((el) => visible(el) && CTA_RE.test((el.innerText || "").trim()));
+    return main || findByText(CTA_RE);
+  };
+
   function banner(text, color) {
     let b = document.getElementById("ps-ac-banner");
     if (!b) {
@@ -155,7 +164,7 @@
     const start = Date.now();
     let cta = null;
     while (Date.now() - start < CLICK_GIVEUP_MS) {
-      cta = findByText(CTA_RE);
+      cta = findCta();
       if (cta) break;
       await new Promise((r) => setTimeout(r, CLICK_RETRY_MS));
     }
