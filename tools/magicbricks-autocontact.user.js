@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         prop-search · MagicBricks auto-contact
 // @namespace    https://github.com/your/prop-search
-// @version      1.0.0
+// @version      1.1.0
 // @description  When prop-search opens a MagicBricks listing with the ?psac= flag, click "Contact Owner" automatically, report the real result back to the prop-search tab, and close. Runs ONLY in your own logged-in browser session.
 // @match        https://www.magicbricks.com/propertyDetails/*
 // @run-at       document-start
@@ -30,6 +30,9 @@
   const [listingId, nonce] = decodeURIComponent(flag[1]).split(".");
 
   const TAG = "[ps-autocontact]";
+  // DEBUG: while tuning, keep the tab OPEN on failure (so you can read the banner/console)
+  // and dump every clickable element's text. Flip to false once auto-click works.
+  const DEBUG = true;
   const CONTACT_API = "/mbcontact/initiateContact";
   const API_WAIT_MS = 25000; // how long to wait for the contact API after clicking
   const CLICK_RETRY_MS = 600; // poll interval while waiting for the button to appear
@@ -96,8 +99,21 @@
     const msg = { source: "ps-autocontact", listingId, nonce, ok, error: error || null };
     try { if (window.opener) window.opener.postMessage(msg, "*"); } catch (e) { log("postMessage failed", e); }
     log("reported", msg);
-    // give the opener a tick to receive, then close the tab we were opened into
-    setTimeout(() => { try { window.close(); } catch { /* ignore */ } }, 800);
+    // Close on success always. On failure, keep the tab open while DEBUG so you can read
+    // the banner + console and tell me the real button text.
+    if (ok || !DEBUG) {
+      setTimeout(() => { try { window.close(); } catch { /* ignore */ } }, 800);
+    }
+  }
+
+  /** Log every visible clickable element's text — the list we match the CTA against. */
+  function dumpClickables() {
+    const rows = clickables()
+      .filter(visible)
+      .map((el) => ({ tag: el.tagName.toLowerCase(), text: (el.innerText || el.value || "").trim().replace(/\s+/g, " ").slice(0, 60) }))
+      .filter((r) => r.text);
+    log(`visible clickable elements (${rows.length}):`);
+    try { console.table(rows); } catch { rows.forEach((r) => log(" •", r.tag, "—", r.text)); }
   }
 
   // ---------------------------------------------------------------- the click
@@ -140,7 +156,8 @@
       await new Promise((r) => setTimeout(r, CLICK_RETRY_MS));
     }
     if (!cta) {
-      banner("couldn't find the Contact button — click it yourself", "#b91c1c");
+      banner("couldn't find the Contact button — see console; click it yourself", "#b91c1c");
+      dumpClickables(); // <-- paste this console output to tune CTA_RE
       return report(false, "contact button not found");
     }
     log("clicking CTA:", (cta.innerText || "").trim().slice(0, 40));
