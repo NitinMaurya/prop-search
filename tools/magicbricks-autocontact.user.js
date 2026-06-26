@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         prop-search · MagicBricks auto-contact
 // @namespace    https://github.com/your/prop-search
-// @version      1.6.0
+// @version      1.7.0
 // @description  When prop-search opens a MagicBricks listing with the ?psac= flag, click "Contact Owner" automatically, report the real result back to the prop-search tab, and close. Runs ONLY in your own logged-in browser session.
 // @match        https://www.magicbricks.com/propertyDetails/*
 // @run-at       document-start
@@ -130,17 +130,13 @@
   };
   const clickables = () =>
     Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"], div[onclick]'));
-  const findByText = (re) =>
-    clickables().find((el) => visible(el) && re.test((el.innerText || el.value || "").trim()));
 
-  // The MAIN listing's contact CTA carries the LDP action class — prefer it over the
-  // "Contact Agent" buttons inside recommended/similar-property sections (which would
-  // contact the wrong listing). Fall back to a plain text match if the class moves.
-  const findCta = () => {
-    const main = Array.from(document.querySelectorAll(".mb-ldp__action--btn, [class*='ldp__action--btn']"))
+  // The MAIN listing's contact CTA carries the LDP action class — this targets it and skips
+  // the "Contact Agent" buttons inside recommended/similar-property sections (which would
+  // contact the wrong listing).
+  const findCta = () =>
+    Array.from(document.querySelectorAll(".mb-ldp__action--btn, [class*='ldp__action--btn']"))
       .find((el) => visible(el) && CTA_RE.test((el.innerText || "").trim()));
-    return main || findByText(CTA_RE);
-  };
 
   function banner(text, color) {
     let b = document.getElementById("ps-ac-banner");
