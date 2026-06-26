@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         prop-search · MagicBricks auto-contact
 // @namespace    https://github.com/your/prop-search
-// @version      1.8.0
+// @version      1.8.1
 // @description  When prop-search opens a MagicBricks listing with the ?psac= flag, click "Contact Owner" automatically, report the real result back to the prop-search tab, and close. Runs ONLY in your own logged-in browser session.
 // @match        https://www.magicbricks.com/propertyDetails/*
 // @run-at       document-start
@@ -31,8 +31,8 @@
 
   const TAG = "[ps-autocontact]";
   // DEBUG: while tuning, keep the tab OPEN on failure (so you can read the banner/console)
-  // and dump every clickable element's text. Flip to false once auto-click works.
-  const DEBUG = true;
+  // and log every network request. Off in normal use: failed tabs auto-close, no noise.
+  const DEBUG = false;
   const CONTACT_API = "/mbcontact/initiateContact";
   const API_WAIT_MS = 20000; // wait for the contact response after the request fires
   const CLICK_RETRY_MS = 600; // re-click interval while waiting for React to wire the handler
