@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         prop-search · MagicBricks auto-contact
 // @namespace    https://github.com/your/prop-search
-// @version      1.1.0
+// @version      1.2.0
 // @description  When prop-search opens a MagicBricks listing with the ?psac= flag, click "Contact Owner" automatically, report the real result back to the prop-search tab, and close. Runs ONLY in your own logged-in browser session.
 // @match        https://www.magicbricks.com/propertyDetails/*
 // @run-at       document-start
@@ -62,6 +62,7 @@
   if (origFetch) {
     window.fetch = function (input, init) {
       const url = typeof input === "string" ? input : (input && input.url) || "";
+      if (DEBUG && url) log("fetch →", url);
       const p = origFetch.apply(this, arguments);
       if (url.includes(CONTACT_API)) {
         p.then((resp) => resp.clone().text().then((t) => {
@@ -77,6 +78,7 @@
   const origOpen = XMLHttpRequest.prototype.open;
   const origSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function (method, url) {
+    if (DEBUG && url) log("xhr →", url);
     this.__psContact = String(url || "").includes(CONTACT_API);
     return origOpen.apply(this, arguments);
   };
@@ -121,7 +123,9 @@
   // shifts, so match on text, not a brittle class. TUNE the patterns here against the live
   // page if a listing fails to auto-click (watch the console with the banner showing).
   const CTA_RE = /\b(contact\s+(owner|agent|builder|dealer|now)|get\s+(owner|phone|contact)|view\s+phone)\b/i;
-  const SUBMIT_RE = /\b(send|submit|get\s+(owner|phone|details)|confirm|view\s+(phone|number)|i agree)\b/i;
+  // Buttons inside the contact popup that actually submit it. Broad on purpose; TUNE from the
+  // popup dump if needed. Excludes the CTA itself (handled separately).
+  const SUBMIT_RE = /\b(send\s*(enquiry|message)?|submit|get\s+(owner|phone|details|contact)|confirm|proceed|continue|view\s+(phone|number)|i\s*agree|ok)\b/i;
 
   const visible = (el) => {
     const r = el.getBoundingClientRect();
@@ -164,16 +168,25 @@
     cta.click();
     banner("contacting owner…", "#2563eb");
 
-    // Some listings pop a modal needing a confirm/submit — click it if it shows up shortly,
-    // but only if the API hasn't already fired from the first click.
+    // A contact popup usually appears and needs a submit/confirm click before MagicBricks
+    // fires initiateContact. Give it time to render, dump its buttons (DEBUG), then click
+    // the submit — poll for up to ~12s and stop the moment the API actually fires.
     let raced = false;
     apiDone.then(() => (raced = true));
-    for (let i = 0; i < 6 && !raced; i++) {
+    let dumped = false, clicked = false;
+    for (let i = 0; i < 18 && !raced; i++) {
       await new Promise((r) => setTimeout(r, 700));
       if (raced) break;
+      if (i === 2 && DEBUG) { dumped = true; log("popup buttons after CTA click:"); dumpClickables(); }
+      if (clicked) continue; // submitted once; now just wait for the API
       const submit = findByText(SUBMIT_RE);
-      if (submit && submit !== cta) { log("clicking submit:", (submit.innerText || "").trim().slice(0, 40)); submit.click(); break; }
+      if (submit && submit !== cta) {
+        log("clicking submit:", (submit.innerText || "").trim().slice(0, 40));
+        submit.click();
+        clicked = true;
+      }
     }
+    if (!clicked && !raced && DEBUG && !dumped) { log("no submit button matched; popup buttons:"); dumpClickables(); }
 
     // Wait for the real initiateContact response (ground truth), or time out.
     const timeout = new Promise((res) => setTimeout(() => res({ ok: null }), API_WAIT_MS));
