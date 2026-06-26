@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         prop-search · MagicBricks auto-contact
 // @namespace    https://github.com/your/prop-search
-// @version      1.5.0
+// @version      1.6.0
 // @description  When prop-search opens a MagicBricks listing with the ?psac= flag, click "Contact Owner" automatically, report the real result back to the prop-search tab, and close. Runs ONLY in your own logged-in browser session.
 // @match        https://www.magicbricks.com/propertyDetails/*
 // @run-at       document-start
@@ -133,23 +133,6 @@
   const findByText = (re) =>
     clickables().find((el) => visible(el) && re.test((el.innerText || el.value || "").trim()));
 
-  // Simulate a REAL user click: MagicBricks' buttons react to pointer/mouse events, not the
-  // synthetic event element.click() dispatches — so .click() alone does nothing. Fire the
-  // full sequence (and .click() last as a belt-and-suspenders).
-  function realClick(el) {
-    try { el.scrollIntoView({ block: "center" }); } catch { /* ignore */ }
-    const Pointer = window.PointerEvent || MouseEvent;
-    const o = { bubbles: true, cancelable: true, view: window, button: 0 };
-    try { el.focus(); } catch { /* ignore */ }
-    el.dispatchEvent(new Pointer("pointerover", o));
-    el.dispatchEvent(new Pointer("pointerdown", o));
-    el.dispatchEvent(new MouseEvent("mousedown", o));
-    el.dispatchEvent(new Pointer("pointerup", o));
-    el.dispatchEvent(new MouseEvent("mouseup", o));
-    el.dispatchEvent(new MouseEvent("click", o));
-    try { el.click(); } catch { /* ignore */ }
-  }
-
   // The MAIN listing's contact CTA carries the LDP action class — prefer it over the
   // "Contact Agent" buttons inside recommended/similar-property sections (which would
   // contact the wrong listing). Fall back to a plain text match if the class moves.
@@ -189,7 +172,7 @@
     }
     log("found + clicking CTA:", cta.tagName.toLowerCase() + "." + String(cta.className).trim().replace(/\s+/g, "."),
         "→", (cta.innerText || "").trim().slice(0, 40));
-    realClick(cta);
+    cta.click();
     banner("contacting owner…", "#2563eb");
 
     // One real click on "Contact Agent" fires initiateContact directly (a confirmation popup
