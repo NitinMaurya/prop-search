@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         prop-search · MagicBricks auto-contact
 // @namespace    https://github.com/your/prop-search
-// @version      1.7.0
+// @version      1.8.0
 // @description  When prop-search opens a MagicBricks listing with the ?psac= flag, click "Contact Owner" automatically, report the real result back to the prop-search tab, and close. Runs ONLY in your own logged-in browser session.
 // @match        https://www.magicbricks.com/propertyDetails/*
 // @run-at       document-start
@@ -34,9 +34,9 @@
   // and dump every clickable element's text. Flip to false once auto-click works.
   const DEBUG = true;
   const CONTACT_API = "/mbcontact/initiateContact";
-  const API_WAIT_MS = 25000; // how long to wait for the contact API after clicking
-  const CLICK_RETRY_MS = 600; // poll interval while waiting for the button to appear
-  const CLICK_GIVEUP_MS = 15000; // stop hunting for the button after this
+  const API_WAIT_MS = 20000; // wait for the contact response after the request fires
+  const CLICK_RETRY_MS = 600; // re-click interval while waiting for React to wire the handler
+  const CLICK_GIVEUP_MS = 30000; // keep re-clicking up to this long (page hydration is slow)
   const log = (...a) => console.log(TAG, ...a);
 
   // ---------------------------------------------------------------- API interception
@@ -46,6 +46,9 @@
   let resolveApi;
   const apiDone = new Promise((res) => (resolveApi = res));
   const settleApi = (ok, detail) => resolveApi({ ok, detail });
+  // Set the MOMENT the contact request is fired (not when it responds) so the click loop
+  // stops immediately — re-clicking after the handler is wired would contact twice.
+  let contactStarted = false;
 
   const judge = (status, bodyText) => {
     let body = null;
@@ -65,6 +68,7 @@
       if (DEBUG && url) log("fetch →", url);
       const p = origFetch.apply(this, arguments);
       if (url.includes(CONTACT_API)) {
+        contactStarted = true;
         p.then((resp) => resp.clone().text().then((t) => {
           const v = judge(resp.status, t);
           log("initiateContact (fetch) →", resp.status, v.ok ? "OK" : "FAIL", v.detail);
@@ -84,6 +88,7 @@
   };
   XMLHttpRequest.prototype.send = function () {
     if (this.__psContact) {
+      contactStarted = true;
       this.addEventListener("loadend", () => {
         const v = judge(this.status, this.responseText);
         log("initiateContact (xhr) →", this.status, v.ok ? "OK" : "FAIL", v.detail);
@@ -154,26 +159,33 @@
 
   async function run() {
     banner("locating Contact button…", "#2563eb");
+
+    // The "Contact Agent" <a> is in the server HTML immediately, but React wires its click
+    // handler only after hydration — an early .click() is a silent no-op. So re-click every
+    // CLICK_RETRY_MS until the contact request actually fires (contactStarted flips the
+    // instant initiateContact goes out), then stop — re-clicking after would contact twice.
     const start = Date.now();
-    let cta = null;
-    while (Date.now() - start < CLICK_GIVEUP_MS) {
-      cta = findCta();
-      if (cta) break;
+    let clicks = 0, found = false;
+    while (Date.now() - start < CLICK_GIVEUP_MS && !contactStarted) {
+      const cta = findCta();
+      if (cta) {
+        found = true;
+        clicks++;
+        if (clicks === 1) {
+          log("found CTA:", cta.tagName.toLowerCase() + "." + String(cta.className).trim().replace(/\s+/g, "."),
+              "→", (cta.innerText || "").trim().slice(0, 40));
+        }
+        cta.click();
+        banner(`contacting owner… (attempt ${clicks})`, "#2563eb");
+      }
       await new Promise((r) => setTimeout(r, CLICK_RETRY_MS));
     }
-    if (!cta) {
+    if (!found) {
       banner("couldn't find the Contact button — see console; click it yourself", "#b91c1c");
       dumpClickables(); // <-- paste this console output to tune CTA_RE
       return report(false, "contact button not found");
     }
-    log("found + clicking CTA:", cta.tagName.toLowerCase() + "." + String(cta.className).trim().replace(/\s+/g, "."),
-        "→", (cta.innerText || "").trim().slice(0, 40));
-    cta.click();
-    banner("contacting owner…", "#2563eb");
-
-    // One real click on "Contact Agent" fires initiateContact directly (a confirmation popup
-    // opens afterwards but is unrelated — we must NOT touch it). So we just wait for the
-    // request; no submit-button hunting.
+    log(`contact request ${contactStarted ? "fired" : "NOT fired"} after ${clicks} click(s)`);
 
     // Wait for the real initiateContact response (ground truth), or time out.
     const timeout = new Promise((res) => setTimeout(() => res({ ok: null }), API_WAIT_MS));
