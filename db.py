@@ -517,6 +517,47 @@ def list_contacted() -> list[dict]:
             "WHERE t.contacted_at IS NOT NULL ORDER BY t.contacted_at DESC")]
 
 
+# --------------------------------------------------------------------- agents view
+# advertiser is stored as "name · userType" (e.g. "Viewpoint Realtors · Agent").
+# Group by the name part only so an agent isn't split across their Agent/Owner/Dealer
+# label. Strip everything from the first " · " onward; empty/NULL -> '(unknown)'.
+_AGENT_KEY = (
+    "COALESCE(NULLIF("
+    "  CASE WHEN instr(TRIM(l.advertiser), ' · ') > 0 "
+    "       THEN substr(TRIM(l.advertiser), 1, instr(TRIM(l.advertiser), ' · ') - 1) "
+    "       ELSE TRIM(l.advertiser) END, ''), '(unknown)')")
+
+
+def agents_summary() -> list[dict]:
+    """Listings grouped by advertiser (the agent/dealer who posted them), so the user
+    can see how many listings each agent has and whether they've been contacted.
+
+    'Contacted' is tracked per listing; an agent counts as contacted if any of their
+    listings is marked contacted. Listings with no advertiser fall under '(unknown)'.
+    Ordered by listing count desc. One row per agent with: agent, n_listings,
+    n_active (non-stale), n_contacted, last_seen_at."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            f"SELECT {_AGENT_KEY} AS agent, "
+            "COUNT(*) AS n_listings, "
+            "SUM(CASE WHEN l.is_stale = 0 THEN 1 ELSE 0 END) AS n_active, "
+            "SUM(CASE WHEN t.contacted_at IS NOT NULL THEN 1 ELSE 0 END) AS n_contacted, "
+            "MAX(l.last_seen_at) AS last_seen_at "
+            "FROM listings l LEFT JOIN tracking t ON t.listing_id = l.id "
+            "GROUP BY agent ORDER BY n_listings DESC, agent ASC")]
+
+
+def listings_by_agent(agent: str) -> list[dict]:
+    """All listings posted by one advertiser, newest first, joined with tracking so the
+    cards/table can show + toggle contacted state. Pass '(unknown)' for the no-advertiser
+    bucket (matches the key used by agents_summary)."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT l.*, t.contacted_at AS contacted_at, t.notes AS notes "
+            "FROM listings l LEFT JOIN tracking t ON t.listing_id = l.id "
+            f"WHERE {_AGENT_KEY} = ? ORDER BY l.last_seen_at DESC", (agent,))]
+
+
 # ------------------------------------------------------------------ observability (D15)
 def start_run() -> int:
     with connect() as conn:

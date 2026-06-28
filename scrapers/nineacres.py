@@ -186,6 +186,54 @@ def normalize_size(text: str | None) -> float | None:
     return round(value * SQFT_TO_SQM, 2)
 
 
+# Area mentions inside free-text descriptions: a number directly followed by an explicit
+# unit. Bare numbers in prose are NOT matched (too ambiguous). Bare "yards"/"meter" without
+# "sq" are excluded too ("200 yards from metro", "5 meter road"); "gaj" is always area.
+_DESC_AREA_RE = re.compile(
+    r"(\d[\d,]*\.?\d*)\s*"
+    r"(sq\.?\s*m(?:t|tr|eter|etre)?s?|sqm|sq\.?\s*metres?"          # square metre
+    r"|sq\.?\s*y(?:d|rd|ard|ds|rds)?s?|sqyrds?|\bgaj\b"            # square yard / gaj
+    r"|sq\.?\s*f(?:t|eet)?s?|sqft|sq\.?\s*feet)",                  # square foot
+    re.IGNORECASE)
+# Words just before an area number that flag it as the plot/total area we want (vs
+# built-up/super/carpet, which we only fall back to when nothing better is quoted).
+_PLOT_HINT = re.compile(r"(plot|land|area|size|dimension)\W*$", re.IGNORECASE)
+_BUILT_HINT = re.compile(r"(built|super|carpet|covered|construct)\w*\W*$", re.IGNORECASE)
+
+
+def size_from_description(text: str | None) -> float | None:
+    """Best explicit plot/area size stated in a listing description, in sqm, or None.
+
+    Preferred over the portal's card area (often a sqft super/built-up figure) when
+    present; the card-derived size stays as the fallback. Requires an explicit unit.
+    When several areas are quoted, a plot/land/area-labelled one wins over a
+    built-up/super/carpet one.
+    """
+    if not text:
+        return None
+    best = None  # (score, sqm) — higher score wins; first match breaks ties
+    for m in _DESC_AREA_RE.finditer(text):
+        try:
+            value = float(m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        if value <= 0:
+            continue
+        unit = m.group(2).lower()
+        if "y" in unit or "gaj" in unit:
+            sqm = value * SQYD_TO_SQM
+        elif "m" in unit:
+            sqm = value
+        else:
+            sqm = value * SQFT_TO_SQM
+        before = text[:m.start()][-24:]
+        score = (3 if _PLOT_HINT.search(before)
+                 else 0 if _BUILT_HINT.search(before) else 1)
+        if best is None or score > best[0]:
+            best = (score, round(sqm, 2))
+    return best[1] if best else None
+
+
 def _extract_sector(location: str | None) -> str | None:
     """Pull a normalized 'Sector N' out of a raw location string, if present."""
     if not location:

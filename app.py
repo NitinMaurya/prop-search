@@ -27,6 +27,7 @@ import streamlit as st
 import db
 import matcher
 import property_types as pt
+import tags
 
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -409,6 +410,9 @@ def _inject_css() -> None:
             border-radius:8px; padding:4px 10px; font-size:.78rem; font-weight:650;
             max-width:100%; overflow-wrap:anywhere; word-break:break-word;}
         .ps-chip-n {background:#f1f5f9; color:#475569;}
+        /* derived feature labels (facing / park-facing) parsed from the description */
+        .ps-chip-feat {background:#ecfdf5; color:#047857;}
+        .ps-chip-park {background:#f0fdf4; color:#15803d;}
         .ps-card-foot {margin-top:auto; display:flex; align-items:center;
             justify-content:space-between; gap:10px; padding-top:.6rem;
             border-top:1px solid var(--ps-line2); flex-wrap:wrap; min-width:0;}
@@ -876,6 +880,27 @@ def _maps_url(sector) -> str:
     return "https://www.google.com/maps/search/?api=1&query=" + urllib.parse.quote(q)
 
 
+def _feature_tags(m: dict) -> dict:
+    """Derived {'facing','park'} labels parsed from the listing text (tags.py), computed
+    once and cached on the dict so the same values drive both the chips and the filters."""
+    if "__tags__" not in m:
+        m["__tags__"] = tags.extract(m)
+    return m["__tags__"]
+
+
+def _feature_chips_html(m: dict) -> str:
+    """Chips for the parsed facing / park-facing labels (empty string if neither found)."""
+    t = _feature_tags(m)
+    chips = []
+    if t["facing"]:
+        chips.append(f"<span class='ps-chip ps-chip-feat' title='{t['facing']} facing'>"
+                     f"🧭 {tags.ABBR[t['facing']]}</span>")
+    if t["park"]:
+        chips.append("<span class='ps-chip ps-chip-park' title='Faces / overlooks a park'>"
+                     "🌳 Park</span>")
+    return "".join(chips)
+
+
 def _match_card_html(m: dict, lb_id: int | None = None,
                      verdict: str | None = None, state: dict | None = None,
                      reason: str | None = None, track: dict | None = None) -> str:
@@ -916,7 +941,9 @@ def _match_card_html(m: dict, lb_id: int | None = None,
     auth = m.get("approving_authority")
     if auth:
         chips.append(f"<span class='ps-chip ps-chip-n'>{html.escape(str(auth))}</span>")
-    chips_html = "".join(chips) or "<span class='ps-chip ps-chip-n'>details on listing</span>"
+    # Derived facing / park-facing labels lead the chip row (they're what buyers scan for).
+    chips_html = (_feature_chips_html(m) + "".join(chips)
+                  or "<span class='ps-chip ps-chip-n'>details on listing</span>")
 
     desc = m.get("description")
     desc_html = f"<div class='ps-desc'>{html.escape(desc)}</div>" if desc else ""
@@ -1031,6 +1058,9 @@ def _match_row_html(m: dict, lb_id: int | None = None,
         fb = ""
 
     score_lbl = (f"<span class='ps-score-pill {sc}'>{pct}%</span>" if has_score else "")
+    # Derived facing / park-facing labels under the title.
+    feat = _feature_chips_html(m)
+    feat_html = f"<div class='ps-chips'>{feat}</div>" if feat else ""
     # When passed, reason chips wrap under the title (the Listing column has the room).
     chips = _reason_chips(int(lid), reason, state) if (lid and verdict == "nope") else ""
     # Compact contacted toggle (+ note indicator) under the title.
@@ -1049,7 +1079,7 @@ def _match_row_html(m: dict, lb_id: int | None = None,
         f"<td><div class='ps-tb-listing'><div class='ps-tb-lmain'>"
         f"<div class='ps-tb-title'>{title}"
         f"{' <span class=\"ps-new-pill\">NEW</span>' if m.get('__new__') else ''}</div>"
-        f"{sub_html}{chips}{tb_track}"
+        f"{sub_html}{feat_html}{chips}{tb_track}"
         f"</div>{score_lbl}</div></td>"
         f"<td class='ps-tb-size'>{size_html}</td>"
         f"<td class='ps-tb-price'>{price_html}</td>"
@@ -1141,6 +1171,8 @@ def _lightbox_html(imaged: list[dict], fb_of=lambda m: None,
             controls += f"<div class='ps-lb-open'>{open_links}</div>"
         desc = m.get("description")
         desc_html = f"<div class='ps-lb-desc'>{html.escape(desc)}</div>" if desc else ""
+        feat = _feature_chips_html(m)
+        feat_html = f"<div class='ps-chips'>{feat}</div>" if feat else ""
         out.append(
             f"<div class='ps-lb' id='lb{k}'>"
             "<a class='ps-lb-backdrop' href='#_'></a>"
@@ -1149,7 +1181,7 @@ def _lightbox_html(imaged: list[dict], fb_of=lambda m: None,
             "<div class='ps-lb-stage'>"
             f"<img class='ps-lb-img' src='{img}' loading='lazy' alt=''>"
             f"<div class='ps-lb-cap'>{cap}<span class='ps-lb-count'>"
-            f"{k+1} / {n}</span></div>{desc_html}{controls}"
+            f"{k+1} / {n}</span></div>{feat_html}{desc_html}{controls}"
             "</div></div>")
     out.append("</div>")
     return "".join(out)
@@ -1193,8 +1225,8 @@ st.sidebar.markdown(
     "<div class='ps-brand-sub'>Noida kothi finder</div></div></div>",
     unsafe_allow_html=True)
 st.sidebar.markdown("<div class='ps-sb-rule'></div>", unsafe_allow_html=True)
-_NAV = ["Matches", "Shortlist", "Requirements", "System", "Settings"]
-_ICONS = {"Matches": "🎯", "Shortlist": "💚", "Requirements": "📋",
+_NAV = ["Matches", "Shortlist", "Agents", "Requirements", "System", "Settings"]
+_ICONS = {"Matches": "🎯", "Shortlist": "💚", "Agents": "🧑‍💼", "Requirements": "📋",
           "System": "🩺", "Settings": "⚙️"}
 _pg = st.query_params.get("pg")
 PAGE = _pg if _pg in _NAV else "Matches"
@@ -1569,6 +1601,14 @@ def page_matches():
     sector_opts = sorted(_sec_counts, key=int)
     _sec_default = [s for s in (qp.get("sec") or "").split(",") if s in sector_opts]
 
+    # Derived feature filters (tags.py): only offer facing directions actually present,
+    # in compass order, with counts; plus a count for the park-facing toggle.
+    _facing_counts = Counter(
+        t for m in matches if (t := _feature_tags(m)["facing"]))
+    facing_opts = [d for d in tags.DIRECTIONS if d in _facing_counts]
+    _face_default = [d for d in (qp.get("face") or "").split(",") if d in facing_opts]
+    _park_count = sum(1 for m in matches if _feature_tags(m)["park"])
+
     # All filters on one row: Requirement · Show · Sort · Sectors · Group toggle.
     f1, f2, f3, f4, f5 = st.columns([3, 2, 2, 3, 1.5], vertical_alignment="bottom")
     req_filter = f1.selectbox(
@@ -1599,9 +1639,26 @@ def page_matches():
                          help="Group listings by sector")
     _sync("grp", "1" if group_by else "0")
 
+    # Second row: derived-feature filters (only shown when the matches actually have them).
+    sel_facing, park_only = [], False
+    if facing_opts or _park_count:
+        g1, g2 = st.columns([4, 2], vertical_alignment="bottom")
+        if facing_opts:
+            sel_facing = g1.multiselect(
+                "🧭 Facing", facing_opts, default=_face_default,
+                format_func=lambda d: f"{tags.ABBR[d]} ({_facing_counts[d]})",
+                placeholder="Any facing direction")
+        _sync("face", ",".join(sel_facing))
+        if _park_count:
+            park_only = g2.toggle(f"🌳 Park-facing ({_park_count})",
+                                  value=qp.get("park") == "1",
+                                  help="Only listings that face / overlook a park")
+        _sync("park", "1" if park_only else "0")
+
     state = {"pg": "Matches", "view": view, "req": req_code,
              "show": _SHOW_CODES[show_filter], "sort": sort_code,
-             "sec": ",".join(sel_sectors), "grp": "1" if group_by else "0"}
+             "sec": ",".join(sel_sectors), "grp": "1" if group_by else "0",
+             "face": ",".join(sel_facing), "park": "1" if park_only else "0"}
 
     rows = matches
     noida_on = bool(db.get_setting("noida_authority_only", 1))
@@ -1631,6 +1688,10 @@ def page_matches():
     if sel_sectors:  # explicit sector filter (in addition to the per-requirement one)
         rows = [m for m in rows
                 if matcher._sector_num(m.get("sector")) in sel_sectors]
+    if sel_facing:  # derived facing-direction filter (tags.py)
+        rows = [m for m in rows if _feature_tags(m)["facing"] in sel_facing]
+    if park_only:  # derived park-facing filter
+        rows = [m for m in rows if _feature_tags(m)["park"]]
     rows = _apply_sort(rows, sort_choice)
 
     if not rows:
@@ -1789,6 +1850,39 @@ def page_shortlist():
                          "Homes you mark <b>👎</b> show up here, out of your way.")
     with t3:
         _render_followups(state)
+
+
+# ================================================================= PAGE — Agents
+def page_agents():
+    _header("Agents", "Listings grouped by the agent / dealer who posted them — so you "
+            "can see how many each has and whether you've already reached out.")
+    agents = db.agents_summary()
+    if not agents:
+        _empty_state("🧑‍💼", "No agents yet",
+                     "Once listings are scraped, the agents who posted them collect here.")
+        return
+
+    contacted_agents = sum(1 for a in agents if a["n_contacted"])
+    total_listings = sum(a["n_listings"] for a in agents)
+    st.markdown(
+        "<div class='ps-tilerow'>"
+        + _tile("Agents", len(agents))
+        + _tile("Listings", total_listings)
+        + _tile("Agents contacted", contacted_agents,
+                "ok" if contacted_agents else "warn")
+        + "</div>",
+        unsafe_allow_html=True)
+
+    state = {"pg": "Agents"}
+    for a in agents:
+        name = a["agent"]
+        n, na, nc = a["n_listings"], a["n_active"], a["n_contacted"]
+        # Expander label answers the two questions at a glance: how many, and contacted?
+        flag = f"✅ {nc}/{n} contacted" if nc else "📭 not contacted yet"
+        stale_note = "" if na == n else f" · {n - na} stale"
+        label = f"{name}  —  {n} listing{'s' if n != 1 else ''}{stale_note}  ·  {flag}"
+        with st.expander(label):
+            _render_listings(db.listings_by_agent(name), "Table", state)
 
 
 # ============================================================== PAGE — System (D15)
@@ -2036,6 +2130,8 @@ elif PAGE == "Matches":
     page_matches()
 elif PAGE == "Shortlist":
     page_shortlist()
+elif PAGE == "Agents":
+    page_agents()
 elif PAGE == "System":
     page_system()
 else:
