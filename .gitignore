@@ -2,8 +2,9 @@
 __pycache__/
 *.pyc
 .env
-data/*.db
-data/.pw-*-profile/
+**/*.db
+# Playwright persistent browser profiles (anywhere, incl. apps/scraper/data/)
+**/.pw-*-profile/
 logs/*.log
 .DS_Store
 graphify-out/
