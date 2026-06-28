@@ -47,4 +47,5 @@ export const PASS_REASONS: [string, string][] = [
   ["location", "📍 Location"],
   ["condition", "🏚️ Size / condition"],
   ["disliked", "👎 Didn’t like"],
+  ["agent", "🚫 Agent"],
 ];
