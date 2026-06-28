@@ -3,6 +3,7 @@
 import { mapsUrl, rupeesToCr, sectorLabel } from "@/lib/format";
 import { useMatchActions } from "@/lib/useMatchActions";
 import { CONTACT_BTN, useContact } from "@/lib/useContact";
+import { FeatureChipsRow } from "@/components/FeatureChips";
 import type { Match } from "@/lib/types";
 
 export function MatchTable({ rows, onZoom }: {
@@ -43,7 +44,7 @@ function Row({ m, onZoom }: { m: Match; onZoom?: (id: number) => void }) {
   const contact = useContact();
   const cState = contact.stateOf(m.id, m.contacted_at);
   const pct = m.score != null ? Math.round(m.score * 100) : null;
-  const canZoom = !!(m.image_url && onZoom);
+  const canZoom = !!onZoom;  // lightbox is the full-details view, available with or without a photo
 
   return (
     <tr className={`border-b border-[var(--color-line)] last:border-0 hover:bg-slate-50 ${m.verdict === "nope" ? "opacity-60" : ""}`}>
@@ -70,6 +71,7 @@ function Row({ m, onZoom }: { m: Match; onZoom?: (id: number) => void }) {
           )}
           {m.advertiser ? ` · ${m.advertiser}` : ""}
         </div>
+        <FeatureChipsRow m={m} className="mt-1" />
       </td>
 
       <td className="px-4 py-2.5 whitespace-nowrap">{m.size_sqm ? `${Math.round(m.size_sqm)} sqm` : "—"}</td>

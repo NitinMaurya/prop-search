@@ -27,7 +27,7 @@ from ..property_types import search_url as _category_search_url
 # Reuse the tuned normalization helpers + the optional-lib guards (D14).
 from ._browser import (
     _HAVE_PARSEL, _HAVE_PLAYWRIGHT, Selector,
-    normalize_price, normalize_size, _extract_sector,
+    normalize_price, normalize_size, size_from_description, _extract_sector,
     PROFILE_DIR as _ACRES_PROFILE,
     WAIT_TIMEOUT_MS, WARMUP_PAUSE_MS, _looks_blocked,
     pw_session, launch_stealth_context,
@@ -309,9 +309,13 @@ class Parser:
 
     def _parse_embedded_one(self, ch: str) -> dict | None:
         price = _emb(ch, "price", num=True)
-        size = _json_area_to_sqm(_emb(ch, "coveredArea") or _emb(ch, "ca"),
-                                 str(_emb(ch, "covAreaUnit") or ""))
         ext_id = _emb(ch, "id")
+        desc = _clean_desc(_emb(ch, "plgdtldesc") or _emb(ch, "dtldesc")
+                           or _emb(ch, "ampDesc"))
+        # Prefer an explicit plot/area size stated in the description; fall back to the
+        # portal's covered-area figure (D31).
+        size = size_from_description(desc) or _json_area_to_sqm(
+            _emb(ch, "coveredArea") or _emb(ch, "ca"), str(_emb(ch, "covAreaUnit") or ""))
         if not price or size is None or not ext_id:
             return None
         u = _emb(ch, "url")
@@ -333,8 +337,7 @@ class Parser:
             "advertiser": advertiser,
             "ownership": _emb(ch, "OwnershipTypeD"),
             "approving_authority": _emb(ch, "appovedAuthC"),
-            "description": _clean_desc(_emb(ch, "plgdtldesc") or _emb(ch, "dtldesc")
-                                       or _emb(ch, "ampDesc")),
+            "description": desc,
         }
 
     # ---------------------------------------------------------------- JSON parsing (D20)
@@ -361,8 +364,12 @@ class Parser:
 
     def _parse_json_one(self, item: dict) -> dict | None:
         price = item.get("price")
+        desc = _clean_desc(item.get("plgdtldesc") or item.get("dtldesc")
+                           or item.get("ampDesc"))
+        # Prefer an explicit plot/area size from the description; card area is fallback (D31).
         area = item.get("coveredArea") or item.get("ca")
-        size_sqm = _json_area_to_sqm(area, str(item.get("covAreaUnit") or ""))
+        size_sqm = (size_from_description(desc)
+                    or _json_area_to_sqm(area, str(item.get("covAreaUnit") or "")))
         if not price or size_sqm is None:
             return None
         u = item.get("url")
@@ -387,8 +394,7 @@ class Parser:
             "advertiser": advertiser,
             "ownership": (item.get("OwnershipTypeD") or "").strip() or None,
             "approving_authority": (item.get("appovedAuthC") or "").strip() or None,
-            "description": _clean_desc(item.get("plgdtldesc") or item.get("dtldesc")
-                                       or item.get("ampDesc")),
+            "description": desc,
         }
 
 
@@ -399,7 +405,7 @@ def _clean_desc(s):
         return None
     s = re.sub(r"<[^>]+>", " ", str(s))      # drop any HTML tags
     s = re.sub(r"\s+", " ", s).strip()
-    return s[:800] or None
+    return s[:4000] or None
 
 
 def _emb_unescape(v: str):

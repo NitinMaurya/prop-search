@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { rupeesToCr, sectorLabel } from "@/lib/format";
 import { PASS_REASONS, useMatchActions } from "@/lib/useMatchActions";
 import { CONTACT_BTN, useContact } from "@/lib/useContact";
+import { FeatureChips } from "@/components/FeatureChips";
+import { hasFeatures } from "@/lib/tags";
 import type { Match } from "@/lib/types";
 
 /** Fullscreen image gallery over the listings that have a photo. Prev/next + Esc/arrows. */
@@ -46,8 +48,10 @@ export function Lightbox({ items, index, onIndex, onClose }: {
           className="absolute right-3 sm:right-6 text-white/70 hover:text-white text-5xl leading-none">›</button>
       )}
       <div className="max-w-4xl w-full" onClick={(e) => e.stopPropagation()}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={m.image_url!} alt="" className="w-full max-h-[78vh] object-contain rounded-xl bg-black" />
+        {m.image_url
+          ? // eslint-disable-next-line @next/next/no-img-element
+            <img src={m.image_url} alt="" className="w-full max-h-[78vh] object-contain rounded-xl bg-black" />
+          : <div className="w-full h-[40vh] flex items-center justify-center text-7xl rounded-xl bg-white/5 text-white/30">🏠</div>}
       </div>
 
       {/* fixed bottom banner: heading + full details + open-listing */}
@@ -74,11 +78,12 @@ export function Lightbox({ items, index, onIndex, onClose }: {
 
         {/* right: tags + actions, inline and right-aligned */}
         <div className="shrink-0 flex flex-col items-end gap-2 max-w-[46%]">
-          {(pct != null || m.advertiser || m.ownership || m.approving_authority) && (
+          {(pct != null || m.advertiser || m.ownership || m.approving_authority || hasFeatures(m)) && (
             <div className="flex flex-wrap justify-end gap-1.5">
               {pct != null && (
                 <span className="text-xs font-extrabold rounded-full px-2.5 py-1 bg-white/15 text-white">{pct}% match</span>
               )}
+              <FeatureChips m={m} dark />
               {[m.advertiser, m.ownership, m.approving_authority].filter(Boolean).map((chip, i) => (
                 <span key={i} className="text-xs font-semibold rounded-md px-2 py-1 bg-white/10 text-white/80">{chip}</span>
               ))}

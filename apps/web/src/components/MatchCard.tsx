@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { mapsUrl, rupeesToCr, sectorLabel } from "@/lib/format";
 import { PASS_REASONS, useMatchActions } from "@/lib/useMatchActions";
 import { CONTACT_BTN, useContact } from "@/lib/useContact";
+import { FeatureChipsRow } from "@/components/FeatureChips";
 import type { Match } from "@/lib/types";
 
 export function MatchCard({ m, onZoom, enableNotes }: {
@@ -19,6 +20,7 @@ export function MatchCard({ m, onZoom, enableNotes }: {
   const cBtn = CONTACT_BTN[cState];
   const pct = m.score != null ? Math.round(m.score * 100) : null;
   const [notesOpen, setNotesOpen] = useState(false);
+  const [descOpen, setDescOpen] = useState(false);
 
   return (
     <div className={`ps-card relative overflow-hidden flex flex-col h-full ${m.verdict === "nope" ? "opacity-60 hover:opacity-100" : ""}`}>
@@ -32,7 +34,9 @@ export function MatchCard({ m, onZoom, enableNotes }: {
           ? // eslint-disable-next-line @next/next/no-img-element
             <img src={m.image_url} alt="" onClick={onZoom}
               className={`w-full h-full object-cover block ${onZoom ? "cursor-zoom-in" : ""}`} />
-          : <div className="w-full h-full flex items-center justify-center text-4xl opacity-50">🏠</div>}
+          : <button type="button" onClick={onZoom} disabled={!onZoom}
+              title={onZoom ? "View full details" : undefined}
+              className={`w-full h-full flex items-center justify-center text-4xl opacity-50 ${onZoom ? "cursor-pointer hover:opacity-70" : ""}`}>🏠</button>}
         {m.is_new && (
           <span className="absolute top-2.5 left-2.5 text-xs font-extrabold text-white px-2.5 py-1 rounded-full"
             style={{ background: "linear-gradient(135deg,#10b981,#059669)" }}>🆕 New</span>
@@ -72,10 +76,22 @@ export function MatchCard({ m, onZoom, enableNotes }: {
         </div>
 
         {/* description — or the user's notes when in Follow-ups mode */}
-        <p className={`text-xs mt-1 line-clamp-2 min-h-[2.4em] ${
+        <p className={`text-xs mt-1 ${descOpen ? "whitespace-pre-line" : "line-clamp-2"} min-h-[2.4em] ${
           enableNotes && !m.notes ? "italic text-[var(--color-muted)]/70" : "text-[var(--color-muted)]"}`}>
           {enableNotes ? (m.notes || "No notes yet — add some 📝") : (m.description ?? "")}
         </p>
+        {/* View more / less — only for long descriptions (not in notes mode). Sits above
+            the card's stretched link so the click expands instead of opening the listing. */}
+        {!enableNotes && (m.description?.length ?? 0) > 120 && (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDescOpen((o) => !o); }}
+            className="relative z-[2] self-start text-xs font-bold text-[var(--color-brand-dk)] hover:underline mt-0.5">
+            {descOpen ? "Show less" : "View more"}
+          </button>
+        )}
+
+        {/* derived facing / park-facing labels parsed from the description */}
+        <FeatureChipsRow m={m} className="mt-2" />
 
         <div className="mt-auto pt-3 flex items-center justify-between">
           <span className="text-xs text-[var(--color-muted)] font-semibold truncate">
